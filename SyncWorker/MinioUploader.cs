@@ -27,8 +27,10 @@ namespace SyncWorker
         private readonly string _accessKey;
         private readonly string _secretKey;
         private readonly string _region;
+        private readonly string _pathPrefix;
 
-        public MinioUploader(string endpoint, string bucket, string accessKey, string secretKey, string region = "us-east-1", string tag = "")
+        public MinioUploader(string endpoint, string bucket, string accessKey, string secretKey,
+            string region = "us-east-1", string pathPrefix = "", string tag = "")
         {
             _bucket = bucket;
             _tag = tag;
@@ -36,6 +38,8 @@ namespace SyncWorker
             _accessKey = accessKey;
             _secretKey = secretKey;
             _region = region;
+            // Normalize prefix: ensure trailing '/' if non-empty (so 'sub' becomes 'sub/')
+            _pathPrefix = string.IsNullOrEmpty(pathPrefix) ? "" : pathPrefix.TrimEnd('/') + "/";
 
             var uri = new Uri(endpoint);
             var clientBuilder = new MinioClient()
@@ -47,6 +51,15 @@ namespace SyncWorker
                 clientBuilder = clientBuilder.WithSSL();
             }
             _client = clientBuilder.Build();
+        }
+
+        /// <summary>
+        /// Prepends the configured path prefix to an object key.
+        /// Returns the key unchanged when no prefix is set.
+        /// </summary>
+        private string ApplyPrefix(string objectKey)
+        {
+            return string.IsNullOrEmpty(_pathPrefix) ? objectKey : _pathPrefix + objectKey;
         }
 
         /// <summary>
@@ -64,16 +77,17 @@ namespace SyncWorker
 
                 var contentType = GetContentType(localFilePath);
                 var fileInfo = new FileInfo(localFilePath);
+                var fullKey = ApplyPrefix(objectKey);
 
                 var args = new PutObjectArgs()
                     .WithBucket(_bucket)
-                    .WithObject(objectKey)
+                    .WithObject(fullKey)
                     .WithFileName(localFilePath)
                     .WithContentType(contentType);
 
                 _client.PutObjectAsync(args, CancellationToken.None).GetAwaiter().GetResult();
 
-                Logger.Info($"{_tag}上传成功: {objectKey} ({fileInfo.Length} 字节, {contentType})");
+                Logger.Info($"{_tag}上传成功: {fullKey} ({fileInfo.Length} 字节, {contentType})");
                 return true;
             }
             catch (MinioException ex)
@@ -95,12 +109,13 @@ namespace SyncWorker
         {
             try
             {
+                var fullKey = ApplyPrefix(objectKey);
                 var args = new RemoveObjectArgs()
                     .WithBucket(_bucket)
-                    .WithObject(objectKey);
+                    .WithObject(fullKey);
 
                 _client.RemoveObjectAsync(args, CancellationToken.None).GetAwaiter().GetResult();
-                Logger.Info($"{_tag}删除成功: {objectKey}");
+                Logger.Info($"{_tag}删除成功: {fullKey}");
                 return true;
             }
             catch (ObjectNotFoundException)
@@ -124,14 +139,16 @@ namespace SyncWorker
         /// Deletes all objects under a given prefix (directory) from MinIO.
         /// Lists objects via raw HTTP + AWS SigV4 (SDK's ListObjectsAsync is broken),
         /// then deletes each one using the SDK's working DeleteObject.
+        /// The configured PathPrefix is prepended to the search prefix.
         /// </summary>
         public bool DeleteObjectsByPrefix(string prefix)
         {
             try
             {
-                Logger.Info($"{_tag}列出前缀 '{prefix}' 下的对象...");
+                var fullPrefix = ApplyPrefix(prefix);
+                Logger.Info($"{_tag}列出前缀 '{fullPrefix}' 下的对象...");
 
-                var keys = ListObjectKeysRaw(prefix);
+                var keys = ListObjectKeysRaw(fullPrefix);
                 if (keys == null)
                 {
                     Logger.Error($"{_tag}列出对象失败: HTTP 请求错误");
@@ -140,7 +157,7 @@ namespace SyncWorker
 
                 if (keys.Count == 0)
                 {
-                    Logger.Info($"{_tag}前缀 '{prefix}' 下没有对象，无需删除");
+                    Logger.Info($"{_tag}前缀 '{fullPrefix}' 下没有对象，无需删除");
                     return true;
                 }
 
@@ -150,7 +167,12 @@ namespace SyncWorker
                 var failCount = 0;
                 foreach (var key in keys)
                 {
-                    if (DeleteObject(key)) successCount++;
+                    // DeleteObject receives the FULL key (already includes prefix); strip
+                    // it before calling DeleteObject so we don't double-prefix.
+                    var keyWithoutPrefix = !string.IsNullOrEmpty(_pathPrefix) && key.StartsWith(_pathPrefix, StringComparison.Ordinal)
+                        ? key.Substring(_pathPrefix.Length)
+                        : key;
+                    if (DeleteObject(keyWithoutPrefix)) successCount++;
                     else failCount++;
                 }
 

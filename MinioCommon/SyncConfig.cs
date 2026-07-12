@@ -48,6 +48,20 @@ namespace MinioCommon
         public int FileStabilitySeconds { get; set; } = 3;
 
         /// <summary>
+        /// Optional path prefix prepended to every object key uploaded to MinIO.
+        /// Default: empty (object key equals the relative path).
+        /// Example: "myproject/" → object key becomes "myproject/sub/file.txt".
+        /// </summary>
+        public string PathPrefix { get; set; }
+
+        /// <summary>
+        /// Optional list of file suffixes to exclude (e.g. [".tmp", ".bak", ".swp"]).
+        /// Files matching these suffixes are skipped during monitoring and full sync.
+        /// Combined with built-in exclusions (.tmp, .bak, .~lock, ~$*).
+        /// </summary>
+        public string[] ExcludeSuffixes { get; set; }
+
+        /// <summary>
         /// Validates the config has all required fields.
         /// Returns null if valid, or an error message if invalid.
         /// </summary>

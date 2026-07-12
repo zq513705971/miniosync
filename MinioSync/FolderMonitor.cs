@@ -65,12 +65,16 @@ namespace MinioSync
             var extFilter = config.FileExtensions != null && config.FileExtensions.Length > 0
                 ? string.Join(", ", config.FileExtensions)
                 : "(所有文件)";
-            Logger.Info($"开始监控 [{config.Id}]: {config.LocalFolderPath} (存储桶: {config.BucketName}, 间隔: {config.SyncIntervalSeconds}秒, 稳定等待: {config.FileStabilitySeconds}秒, 扩展名: {extFilter})");
+            var exclFilter = config.ExcludeSuffixes != null && config.ExcludeSuffixes.Length > 0
+                ? string.Join(", ", config.ExcludeSuffixes)
+                : "(无)";
+            var prefixInfo = string.IsNullOrEmpty(config.PathPrefix) ? "" : $", 路径前缀: {config.PathPrefix}";
+            Logger.Info($"开始监控 [{config.Id}]: {config.LocalFolderPath} (存储桶: {config.BucketName}, 间隔: {config.SyncIntervalSeconds}秒, 稳定等待: {config.FileStabilitySeconds}秒, 扩展名: {extFilter}, 排除后缀: {exclFilter}{prefixInfo})");
         }
 
         private void OnFileChanged(object sender, FileSystemEventArgs e)
         {
-            if (SyncHelper.ShouldIgnore(e.FullPath, _config.FileExtensions)
+            if (SyncHelper.ShouldIgnore(e.FullPath, _config.FileExtensions, _config.ExcludeSuffixes)
                 || (e.ChangeType == WatcherChangeTypes.Changed && IsDirectory(e.FullPath)))
                 return;
 
@@ -111,7 +115,7 @@ namespace MinioSync
             }
 
             // Individual file deletion
-            if (SyncHelper.ShouldIgnore(e.FullPath, _config.FileExtensions)) return;
+            if (SyncHelper.ShouldIgnore(e.FullPath, _config.FileExtensions, _config.ExcludeSuffixes)) return;
             _pendingChanges.AddOrUpdate(relativePath,
                 k => new PendingChange { Action = "delete", LastEventTime = DateTime.UtcNow },
                 (k, existing) =>
@@ -124,7 +128,7 @@ namespace MinioSync
 
         private void OnFileRenamed(object sender, RenamedEventArgs e)
         {
-            if (!SyncHelper.ShouldIgnore(e.OldFullPath, _config.FileExtensions))
+            if (!SyncHelper.ShouldIgnore(e.OldFullPath, _config.FileExtensions, _config.ExcludeSuffixes))
             {
                 var oldRelative = SyncHelper.GetRelativePath(_config.LocalFolderPath, e.OldFullPath);
                 _pendingChanges.AddOrUpdate(oldRelative,
@@ -136,7 +140,7 @@ namespace MinioSync
                         return existing;
                     });
             }
-            if (!SyncHelper.ShouldIgnore(e.FullPath, _config.FileExtensions))
+            if (!SyncHelper.ShouldIgnore(e.FullPath, _config.FileExtensions, _config.ExcludeSuffixes))
             {
                 var newRelative = SyncHelper.GetRelativePath(_config.LocalFolderPath, e.FullPath);
                 _pendingChanges.AddOrUpdate(newRelative,

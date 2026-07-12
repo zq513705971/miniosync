@@ -98,7 +98,7 @@ namespace FullSync
             Logger.Info($"============================================");
 
             // Collect all files
-            var files = SyncHelper.CollectFiles(targetConfig.LocalFolderPath, targetConfig.FileExtensions);
+            var files = SyncHelper.CollectFiles(targetConfig.LocalFolderPath, targetConfig.FileExtensions, targetConfig.ExcludeSuffixes);
 
             Logger.Info($"共发现 {files.Count} 个文件");
 

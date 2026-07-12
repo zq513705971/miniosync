@@ -43,7 +43,6 @@ MinioSync/
 │
 ├── packages/              # NuGet 包还原目录
 ├── deploy/                # 构建产物输出目录（部署用）
-├── logs/                  # 运行日志（运行时生成）
 ├── config.json            # 配置文件
 └── build.ps1              # 构建脚本
 ```
@@ -102,10 +101,10 @@ MinioSync/
 ```
 
 部署时需要拷贝以下文件到同一目录：
-- `MinioSync.exe`、`MinioSync.pdb`
-- `SyncWorker.exe`、`SyncWorker.pdb`
-- `FullSync.exe`、`FullSync.pdb`
-- `MinioCommon.dll`、`MinioCommon.pdb`
+- `MinioSync.exe`
+- `SyncWorker.exe`
+- `FullSync.exe`
+- `MinioCommon.dll`
 - `config.json`
 
 ---
@@ -130,7 +129,9 @@ MinioSync/
       "SecretKey": "admin123456",
       "SyncIntervalSeconds": 60,
       "FileStabilitySeconds": 3,
-      "FileExtensions": [".txt", ".csv", ".json", ".log"]
+      "FileExtensions": [".txt", ".csv", ".json", ".log"],
+      "ExcludeSuffixes": [".tmp", ".bak", ".swp"],
+      "PathPrefix": "myproject"
     }
   ]
 }
@@ -151,7 +152,9 @@ MinioSync/
 | `SecretKey` | 是 | MinIO 秘密密钥 |
 | `SyncIntervalSeconds` | 否 | 批处理定时器周期，默认 `60` |
 | `FileStabilitySeconds` | 否 | 文件稳定等待时长（无写事件后多久触发上传），默认 `3` |
-| `FileExtensions` | 否 | 要同步的扩展名列表；为空/null 表示全部 |
+| `FileExtensions` | 否 | 要同步的扩展名白名单；为空/null 表示全部 |
+| `ExcludeSuffixes` | 否 | 要排除的文件后缀列表（如 `[".tmp", ".bak"]`），叠加在内置排除（`.tmp`、`.bak`、`.~lock`、`~$*`）之上 |
+| `PathPrefix` | 否 | 上传到 MinIO 时给对象 Key 增加的前缀，如 `"myproject/"`，未设置则对象 Key 等于相对路径 |
 
 ---
 
@@ -223,11 +226,67 @@ SyncWorker.exe ^
 | `--relative` | 是 | 相对路径（用作对象 Key） |
 | `--action` | 否，默认 `upload` | `upload` / `delete` / `delete-prefix` |
 | `--task-id` | 否 | 任务 ID（用于日志关联） |
+| `--path-prefix` | 否 | 对象 Key 前缀（与配置中的 `PathPrefix` 一致） |
 
 **Action 说明**：
 - `upload`：上传单个文件
 - `delete`：删除单个对象
 - `delete-prefix`：列出指定前缀下的所有对象并逐个删除（用于目录级删除）
+
+---
+
+## 路径前缀（PathPrefix）与后缀排除（ExcludeSuffixes）
+
+### PathPrefix
+
+`PathPrefix` 给所有上传到 MinIO 的对象 Key 添加统一前缀。典型场景：多套配置共用同一个存储桶时按前缀隔离。
+
+**示例**：
+
+```json
+{
+  "Id": "project-a",
+  "LocalFolderPath": "E:\\Data\\project-a",
+  "BucketName": "shared-bucket",
+  "PathPrefix": "project-a/",
+  ...
+}
+```
+
+| 本地文件 | 相对路径 | 上传后的对象 Key |
+|---|---|---|
+| `E:\Data\project-a\doc.txt` | `doc.txt` | `project-a/doc.txt` |
+| `E:\Data\project-a\sub\a.csv` | `sub/a.csv` | `project-a/sub/a.csv` |
+
+目录删除时也自动加前缀：本地 `sub/` 被删 → MinIO 上删除 `project-a/sub/` 下所有对象。
+
+注意：
+- 自动补 `/`：`"project-a"` 和 `"project-a/"` 等价
+- 空字符串或未设置 → 对象 Key 等于相对路径（默认行为）
+
+### ExcludeSuffixes
+
+`ExcludeSuffixes` 列出**额外**要忽略的文件后缀，叠加在以下内置排除规则之上：
+
+| 规则 | 说明 |
+|---|---|
+| `.tmp` | 临时文件 |
+| `.bak` | 备份文件 |
+| `.~lock` | Office 锁定文件 |
+| `~$*` | Office 临时文件（如 `~$doc.xlsx`） |
+
+**示例**：
+
+```json
+"FileExtensions": [".txt", ".csv"],
+"ExcludeSuffixes": [".swp", ".partial"]
+```
+
+效果：
+- 上传：仅白名单内（`.txt`、`.csv`）且不在排除列表（`.swp`、`.partial`）的文件
+- 删除/重命名监控：被排除后缀命名的文件被忽略
+
+注意：排除是**额外**的，不会覆盖内置规则。要禁用内置排除请直接修改源码 `SyncHelper.ShouldIgnore`。
 
 ---
 

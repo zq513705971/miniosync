@@ -30,6 +30,7 @@ namespace SyncWorker
                 string relativePath = null;
                 string action = "upload";
                 string taskId = null;
+                string pathPrefix = "";
 
                 for (int i = 0; i < args.Length; i++)
                 {
@@ -49,6 +50,8 @@ namespace SyncWorker
                         action = args[++i].ToLowerInvariant();
                     else if (args[i] == "--task-id" && i + 1 < args.Length)
                         taskId = args[++i];
+                    else if (args[i] == "--path-prefix" && i + 1 < args.Length)
+                        pathPrefix = args[++i];
                 }
 
                 tag = string.IsNullOrEmpty(taskId) ? "" : $"[{taskId}] ";
@@ -70,7 +73,7 @@ namespace SyncWorker
                 endpoint = endpoint.TrimEnd('/');
                 Logger.Info($"{tag}SyncWorker: action={action}, file={relativePath}");
 
-                var uploader = new MinioUploader(endpoint, bucket, accessKey, secretKey, tag: tag);
+                var uploader = new MinioUploader(endpoint, bucket, accessKey, secretKey, pathPrefix: pathPrefix, tag: tag);
 
                 bool success;
                 if (action == "delete-prefix")
