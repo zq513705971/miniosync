@@ -6,41 +6,30 @@ on:
 
 jobs:
   build:
-    runs-on: windows-2022  # 使用更稳定的镜像
-    
+    runs-on: windows-2022
+
     steps:
     - uses: actions/checkout@v4
-    
+
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
-    
-    # 关键步骤：安装 .NET Framework 4.6.1 目标包
+
     - name: Install .NET Framework 4.6.1 targeting pack
-      run: |
-        # 使用 Chocolatey 安装（GitHub Runner 预装了 Chocolatey）
-        choco install netfx-4.6.1-devpack -y
-        
-        # 或者使用 Visual Studio 安装程序（备选）
-        # & "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe" modify `
-        #   --installPath "C:\Program Files\Microsoft Visual Studio\2022\Enterprise" `
-        #   --add Microsoft.Net.Component.4.6.1.TargetingPack `
-        #   --passive --norestart
-    
-    # 可选：验证是否安装成功
-    - name: Verify targeting pack
-      run: |
-        Get-ChildItem "C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.6.1"
-    
+      run: choco install netfx-4.6.1-devpack -y
+
     - name: Restore NuGet packages
       run: nuget restore MinioSync.sln
-    
+
     - name: Build
       run: msbuild MinioSync.sln /p:Configuration=Release /p:Platform="Any CPU"
-    
+
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Build Output
+        name: MinioSync-Build
         path: |
-          **\bin\Any CPU\Release\*
-          !**\*.pdb
+          deploy\*.exe
+          deploy\*.dll
+          deploy\*.pdb
+          deploy\*.config
+        if-no-files-found: error
