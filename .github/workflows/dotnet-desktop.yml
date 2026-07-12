@@ -14,11 +14,23 @@ jobs:
     - name: Setup MSBuild
       uses: microsoft/setup-msbuild@v2
     
+    - name: Find solution file
+      id: find-sln
+      run: |
+        $slnFile = Get-ChildItem -Path . -Filter "*.sln" -Recurse | Select-Object -First 1
+        if ($slnFile) {
+          echo "SOLUTION_FILE=$($slnFile.Name)" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          echo "Found solution file: $($slnFile.Name)"
+        } else {
+          echo "No .sln file found!"
+          exit 1
+        }
+    
     - name: Restore NuGet packages
-      run: nuget restore YourSolution.sln
+      run: nuget restore ${{ steps.find-sln.outputs.SOLUTION_FILE }}
     
     - name: Build
-      run: msbuild YourSolution.sln /p:Configuration=Release /p:Platform="Any CPU"
+      run: msbuild ${{ steps.find-sln.outputs.SOLUTION_FILE }} /p:Configuration=Release /p:Platform="Any CPU"
     
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
