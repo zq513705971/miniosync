@@ -1,0 +1,17 @@
+{
+  "Version": 1,
+  "Configs": [
+    {
+      "Id": "project-a",
+      "Enable": true,
+      "LocalFolderPath": "E:\\Test\\p1",
+      "MinIOEndpoint": "http://192.168.52.120:9000",
+      "BucketName": "dir1",
+      "AccessKey": "admin",
+      "SecretKey": "admin123456",
+      "SyncIntervalSeconds": 60,
+      "FileStabilitySeconds": 3,
+      "FileExtensions": [".txt", ".csv", ".json", ".log"]
+    }
+  ]
+}

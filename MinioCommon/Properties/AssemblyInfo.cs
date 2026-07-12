@@ -5,11 +5,11 @@ using System.Runtime.InteropServices;
 // 有关程序集的一般信息由以下
 // 控制。更改这些特性值可修改
 // 与程序集关联的信息。
-[assembly: AssemblyTitle("MinioSync")]
+[assembly: AssemblyTitle("MinioCommon")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("smallbyte")]
-[assembly: AssemblyProduct("MinioSync")]
+[assembly: AssemblyProduct("MinioCommon")]
 [assembly: AssemblyCopyright("Copyright © 2026 smallbyte")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
@@ -20,7 +20,7 @@ using System.Runtime.InteropServices;
 [assembly: ComVisible(false)]
 
 // 如果此项目向 COM 公开，则下列 GUID 用于类型库的 ID
-[assembly: Guid("5164bf3d-035f-4752-8bef-a3868288a6c3")]
+[assembly: Guid("377ce237-a6cf-4f81-a1c6-b7915803d1a8")]
 
 // 程序集的版本信息由下列四个值组成: 
 //
