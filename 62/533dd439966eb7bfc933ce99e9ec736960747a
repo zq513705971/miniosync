@@ -1,0 +1,19 @@
+SyncWorker/MinioUploader.cs
+  s_5ce66a743058ac::t_564e6d7d51c2e2 41-50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "62533dd439966eb7bfc933ce99e9ec736960747a",
+  "prompts": {},
+  "sessions": {
+    "s_5ce66a743058ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ses_0a58e355bffe7S7JgSeTCX2UKO",
+        "model": "unknown"
+      },
+      "human_author": "zhanqun <zhanqun@eccom.com.cn>"
+    }
+  }
+}
