@@ -27,7 +27,9 @@ param(
 
     [string]$Runtime = "win-x64",
 
-    [string]$Solution = "MinioSync.sln"
+    [string]$Solution = "MinioSync.sln",
+
+    [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -103,6 +105,11 @@ $publishProps = @(
     '-p:PublishTrimmed=false'          # Newtonsoft.Json/Minio 未标 IsTrimmable, trim 会崩
 )
 
+if (-not [string]::IsNullOrEmpty($Version)) {
+    $publishProps += "-p:Version=$Version"
+    Write-Host "  Version override: $Version" -ForegroundColor DarkCyan
+}
+
 # Flatten: every exe + its assets go into the same deploy/ directory.
 # IMPORTANT: do NOT pass --no-build here. Single-file publish (PublishSingleFile=true)
 # requires a RID-specific intermediate build because the SDK needs to materialize a
@@ -119,6 +126,9 @@ foreach ($name in $exes) {
         --output $deployDir `
         @publishProps
     if ($LASTEXITCODE -ne 0) { throw "Publish $name failed (exit $LASTEXITCODE)" }
+    if (-not [string]::IsNullOrEmpty($Version)) {
+        Write-Host "  Version: $Version" -ForegroundColor DarkCyan
+    }
 }
 
 # -------- Step 5: copy config.json + README to deploy root --------
