@@ -1,0 +1,20 @@
+.github/workflows/dotnet.yml
+  s_5ce66a743058ac::t_4ef5edbaf3ebb9 11-12
+  s_5ce66a743058ac::t_80a1a252f38b08 6,29,33,43-54
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "675ec5fc45a664a97a41d84bfba38661eab439fa",
+  "prompts": {},
+  "sessions": {
+    "s_5ce66a743058ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ses_0a58e355bffe7S7JgSeTCX2UKO",
+        "model": "unknown"
+      },
+      "human_author": "zhanqun <zhanqun@eccom.com.cn>"
+    }
+  }
+}
