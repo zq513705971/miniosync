@@ -54,15 +54,22 @@ jobs:
           "{0,8} MB  {1}" -f $sizeMB, $_.Name
         } | Write-Host
 
+    - name: Package deploy (zip)
+      if: startsWith(github.ref, 'refs/tags/v')
+      shell: pwsh
+      run: |
+        $version = "${{ steps.gitversion.outputs.semVer }}"
+        $zipName = "MinioSync-v$version.zip"
+        Compress-Archive -Path deploy\* -DestinationPath $zipName -CompressionLevel Optimal
+        Write-Host "Created: $zipName"
+        # 输出 zip 路径供后续步骤使用
+        Add-Content -Path $env:GITHUB_ENV -Value "RELEASE_ZIP=$zipName"
+
     - name: Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       with:
         name: v${{ steps.gitversion.outputs.semVer }}
-        files: |
-          deploy/MinioSync.exe
-          deploy/SyncWorker.exe
-          deploy/FullSync.exe
-          deploy/config.json
+        files: ${{ env.RELEASE_ZIP }}
         generate_release_notes: true
         fail_on_unmatched_files: true
