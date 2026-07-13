@@ -273,14 +273,14 @@ namespace MinioSync
                         // Only record upload failures: delete/delete-prefix failures
                         // refer to local files that no longer exist and can't be retried.
                         if (action == "upload")
-                            ErrorLog.Record(_config.Id, fullPath);
+                            ErrorLog.Record(_config.Id, relativeKey);
                     }
                 }
                 catch (Exception ex)
                 {
                     Logger.Error($"{tag}{action} 异常: {objectKey}", ex);
                     if (action == "upload")
-                        ErrorLog.Record(_config.Id, fullPath);
+                        ErrorLog.Record(_config.Id, relativeKey);
                 }
                 finally
                 {

@@ -245,19 +245,19 @@ E:\Backups\重要合同.docx
 
 #### 上传失败重试
 
-FullSync 运行中上传失败的文件路径会自动记录到错误日志文件：
+FullSync 运行中上传失败的文件路径会自动记录到错误日志文件（路径**相对于**该配置的 `LocalFolderPath`）：
 
 ```
 logs/error-YYYY-MM-DD-{configId}-{pid}.txt
 ```
 
-例如：`logs/error-2026-07-13-project-a-8272.txt`。每行一个文件完整路径，可用作 `--list` 的参数进行重试：
+例如：`logs/error-2026-07-13-project-a-8272.txt`。每行一个相对路径，可用作 `--list` 的参数进行重试：
 
 ```cmd
 FullSync.exe --config-id project-a --list logs\error-2026-07-13-project-a-8272.txt
 ```
 
-错误文件名包含 `configId`，多配置运行时可以从文件名直接看出是哪个配置的失败记录。
+`--list` 会自动将相对路径拼接上配置的 `LocalFolderPath`，也同时支持绝对路径（便于手动编辑后使用）。错误文件名包含 `configId`，多配置运行时可以从文件名直接看出是哪个配置的失败记录。
 
 ### 3. SyncWorker（供外部脚本/工具手工调用）
 
@@ -436,7 +436,7 @@ SyncWorker.exe ^
 - `sync-YYYY-MM-DD-<pid>.log` — 守护进程（包含 FSW 事件、进程内上传/删除的所有日志）
 - `fullsync-YYYY-MM-DD-<pid>.log` — FullSync 工具
 - `worker-YYYY-MM-DD-<pid>.log` — SyncWorker（**仅当外部手工调用 SyncWorker.exe 时才会生成**；守护进程和 FullSync 不再调用 SyncWorker，所以正常运行时不会有此文件）
-- `error-YYYY-MM-DD-{configId}-<pid>.txt` — **上传失败记录**（FullSync 和 MinioSync 守护进程共享）。每行一个文件完整路径，可配合 `FullSync.exe --list` 重试
+- `error-YYYY-MM-DD-{configId}-<pid>.txt` — **上传失败记录**（FullSync 和 MinioSync 守护进程共享）。每行一个**相对于** `LocalFolderPath` 的路径，可配合 `FullSync.exe --list` 重试
 
 `<pid>` 是进程 ID（`Environment.ProcessId`），同一组件多次启动会生成多个文件，**不会互相覆盖**。例：`fullsync-2026-07-13-8272.log`、`fullsync-2026-07-13-4108.log`。
 

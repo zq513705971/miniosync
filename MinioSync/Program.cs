@@ -38,7 +38,6 @@ namespace MinioSync
             Logger.Info("MinioSync 守护进程已启动");
             Logger.Info($"配置文件: {configPath}");
             Logger.Info($"日志目录: {logsDir}");
-            Logger.Info("处理模式: 进程内多线程（不再 spawn Worker.exe）");
             Logger.Info("============================================");
 
             // Load configs

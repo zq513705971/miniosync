@@ -8,13 +8,18 @@ namespace MinioCommon
     /// Writes failed file paths (one per line) to a daily error log so the user
     /// can later retry them via `FullSync.exe --list error-YYYY-MM-DD-{configId}-PID.txt`.
     ///
-    /// The error file is named per-configId because multiple configs may run
-    /// simultaneously (e.g. the MinioSync daemon watching several folders), and
-    /// the user needs to know which config the failed files belong to.
+    /// The file stores paths **relative** to the config's LocalFolderPath so that:
+    ///   - The error file is compact (no repeated absolute prefix).
+    ///   - Multi-config runs are easy to distinguish (filename already contains configId).
+    ///   - Relative paths work directly with `FullSync.exe --list` because LoadFileList
+    ///     automatically resolves them against the config's LocalFolderPath.
     ///
-    /// File format is plain text — each line is one absolute file path, suitable
-    /// to be fed back into LoadFileList (which also supports blank lines and
-    /// '#' comments for manual editing before a retry run).
+    /// Absolute paths are also supported by LoadFileList (for manual editing), but
+    /// ErrorLog always records relative paths.
+    ///
+    /// File format is plain text — each line is one file path, suitable to be fed
+    /// back into LoadFileList (which supports blank lines and '#' comments for
+    /// manual editing before a retry run).
     ///
     /// Call <see cref="Initialize"/> once at startup with the logs directory,
     /// then call <see cref="Record(string, string)"/> for each failed path.
@@ -52,9 +57,9 @@ namespace MinioCommon
         /// Appends one file path to the error log for the given configId.
         /// No-op if Initialize wasn't called or path/configId is null/empty.
         /// </summary>
-        public static void Record(string configId, string fullPath)
+        public static void Record(string configId, string relativePath)
         {
-            if (string.IsNullOrEmpty(_logDir) || string.IsNullOrEmpty(fullPath)) return;
+            if (string.IsNullOrEmpty(_logDir) || string.IsNullOrEmpty(relativePath)) return;
 
             var path = GetErrorFilePath(configId);
             if (path == null) return;
@@ -63,7 +68,7 @@ namespace MinioCommon
             {
                 try
                 {
-                    File.AppendAllText(path, fullPath + Environment.NewLine);
+                    File.AppendAllText(path, relativePath + Environment.NewLine);
                     Interlocked.Increment(ref _recordedCount);
                 }
                 catch

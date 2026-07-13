@@ -112,7 +112,7 @@ namespace FullSync
             }
 
             Logger.Info("============================================");
-            Logger.Info($"FullSync 启动（进程内多线程模式）");
+            Logger.Info($"FullSync 启动");
             Logger.Info($"  配置 ID:    {targetConfig.Id}");
             Logger.Info($"  文件来源:   {sourceDescription}");
             Logger.Info($"  存储桶:     {targetConfig.BucketName}");
@@ -161,13 +161,13 @@ namespace FullSync
                             else
                             {
                                 Interlocked.Increment(ref failed);
-                                ErrorLog.Record(configId, capturedPath);
+                                ErrorLog.Record(configId, relativePath);
                             }
                         }
                         catch (Exception ex)
                         {
                             Interlocked.Increment(ref exceptions);
-                            ErrorLog.Record(configId, capturedPath);
+                            ErrorLog.Record(configId, relativePath);
                             Logger.Error($"上传异常: {objectKey}", ex);
                         }
                         finally
@@ -204,9 +204,14 @@ namespace FullSync
         }
 
         /// <summary>
-        /// Reads a file list (one absolute path per line) and returns the valid,
-        /// non-ignored files. Blank lines and lines starting with '#' are treated as
+        /// Reads a file list (one path per line) and returns the resolved absolute
+        /// file paths. Supports both absolute paths and paths relative to the config's
+        /// LocalFolderPath. Blank lines and lines starting with '#' are treated as
         /// comments. Missing files are logged and skipped.
+        ///
+        /// Relative paths are resolved against <paramref name="config.LocalFolderPath"/>
+        /// so that error log files (which store relative paths) can be fed directly
+        /// into --list for retry.
         /// </summary>
         private static List<string> LoadFileList(string listPath, SyncConfig config)
         {
@@ -216,6 +221,7 @@ namespace FullSync
                 return new List<string>();
             }
 
+            var baseDir = config.LocalFolderPath;
             var result = new List<string>();
             int skippedMissing = 0;
             int skippedIgnored = 0;
@@ -236,21 +242,26 @@ namespace FullSync
                     continue;
                 }
 
-                if (!File.Exists(line))
+                // Resolve relative paths against the config's LocalFolderPath.
+                var resolvedPath = Path.IsPathRooted(line)
+                    ? line
+                    : Path.Combine(baseDir, line);
+
+                if (!File.Exists(resolvedPath))
                 {
                     Logger.Warn($"列表中文件不存在，跳过: {line}");
                     skippedMissing++;
                     continue;
                 }
 
-                if (SyncHelper.ShouldIgnore(line, config.FileExtensions, config.ExcludeSuffixes))
+                if (SyncHelper.ShouldIgnore(resolvedPath, config.FileExtensions, config.ExcludeSuffixes))
                 {
                     Logger.Info($"列表中文件被排除后缀/扩展名过滤，跳过: {line}");
                     skippedIgnored++;
                     continue;
                 }
 
-                result.Add(line);
+                result.Add(resolvedPath);
             }
 
             Logger.Info($"读取文件列表 {listPath}: 有效={result.Count}, 跳过(不存在)={skippedMissing}, 跳过(过滤)={skippedIgnored}, 跳过(空行)={skippedBlank}, 跳过(注释)={skippedComment}");
