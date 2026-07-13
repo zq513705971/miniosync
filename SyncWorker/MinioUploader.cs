@@ -38,8 +38,16 @@ namespace SyncWorker
             _accessKey = accessKey;
             _secretKey = secretKey;
             _region = region;
-            // Normalize prefix: ensure trailing '/' if non-empty (so 'sub' becomes 'sub/')
-            _pathPrefix = string.IsNullOrEmpty(pathPrefix) ? "" : pathPrefix.TrimEnd('/') + "/";
+            // Normalize prefix:
+            //   - Normalize Windows backslashes to forward slashes so JSON values like
+            //     "data\\bronze\\blobs\\app0043" become "data/bronze/blobs/app0043"
+            //     (otherwise the whole path collapses into a single backslash-named
+            //     "folder" in the S3/MinIO console, instead of nested levels).
+            //   - Ensure trailing '/' if non-empty so concatenation with the object key
+            //     always produces a clean segment boundary (e.g. 'sub' becomes 'sub/').
+            _pathPrefix = string.IsNullOrEmpty(pathPrefix)
+                ? ""
+                : pathPrefix.Replace('\\', '/').TrimEnd('/') + "/";
 
             var uri = new Uri(endpoint);
             var clientBuilder = new MinioClient()
