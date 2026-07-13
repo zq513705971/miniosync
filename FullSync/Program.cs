@@ -2,16 +2,26 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 using MinioCommon;
 
 namespace FullSync
 {
     /// <summary>
-    /// FullSync — standalone tool that performs a full sync of all files
-    /// in a configured folder to MinIO, by spawning SyncWorker.exe for each file.
+    /// FullSync — 一次性全量同步工具。
+    /// **进程内多线程执行**：直接调用 MinioCommon.MinioUploader，通过 SemaphoreSlim 限并发，
+    /// 不再 spawn SyncWorker.exe 子进程。
     ///
-    /// Usage:
-    ///   FullSync.exe --config-id <id> [--configs-dir <path>] [--concurrency|-c <n>] [--worker-path <path>] [--logs-dir <path>]
+    /// 两种文件来源模式：
+    ///   1. 目录扫描（默认）：按配置中的 LocalFolderPath 全量扫描
+    ///   2. 文件列表（--list）：按列表文件每行一个完整路径逐个处理
+    ///
+    /// 用法：
+    ///   FullSync.exe --config-id &lt;id&gt;
+    ///                 [--config &lt;path&gt;]
+    ///                 [--list &lt;file-list-path&gt;]
+    ///                 [--concurrency|-c &lt;n&gt;]
+    ///                 [--logs-dir &lt;path&gt;]
     /// </summary>
     class Program
     {
@@ -20,9 +30,9 @@ namespace FullSync
             var exeDir = AppDomain.CurrentDomain.BaseDirectory;
             var configPath = Path.Combine(exeDir, "config.json");
             var logsDir = Path.Combine(exeDir, "logs");
-            var workerPath = Path.Combine(exeDir, "SyncWorker.exe");
             string configId = null;
-            var concurrency = 10;
+            string listPath = null;
+            var cliConcurrency = 0; // 0 = use config.MaxConcurrentUploads
 
             // Parse arguments
             for (int i = 0; i < args.Length; i++)
@@ -31,29 +41,23 @@ namespace FullSync
                     configPath = args[++i];
                 else if (args[i] == "--logs-dir" && i + 1 < args.Length)
                     logsDir = args[++i];
-                else if (args[i] == "--worker-path" && i + 1 < args.Length)
-                    workerPath = args[++i];
                 else if (args[i] == "--config-id" && i + 1 < args.Length)
                     configId = args[++i];
+                else if (args[i] == "--list" && i + 1 < args.Length)
+                    listPath = args[++i];
                 else if ((args[i] == "--concurrency" || args[i] == "-c") && i + 1 < args.Length)
                 {
-                    int.TryParse(args[++i], out concurrency);
+                    int.TryParse(args[++i], out cliConcurrency);
                 }
             }
 
             Logger.Initialize(logsDir, "fullsync");
+            ErrorLog.Initialize(logsDir);
 
-            // Validate
             if (string.IsNullOrEmpty(configId))
             {
                 Logger.Error("缺少必要参数: --config-id");
-                Console.Error.WriteLine("用法: FullSync.exe --config-id <id> [--config <路径>] [--concurrency|-c <并发数>] [--worker-path <路径>] [--logs-dir <路径>]");
-                return 1;
-            }
-
-            if (!File.Exists(workerPath))
-            {
-                Logger.Error($"未找到 SyncWorker.exe: {workerPath}");
+                Console.Error.WriteLine("用法: FullSync.exe --config-id <id> [--config <路径>] [--list <文件列表>] [--concurrency|-c <并发数>] [--logs-dir <路径>]");
                 return 1;
             }
 
@@ -81,26 +85,41 @@ namespace FullSync
                 return 1;
             }
 
-            if (!Directory.Exists(targetConfig.LocalFolderPath))
+            // Resolve effective concurrency: --concurrency CLI flag wins, else config.
+            var effectiveConcurrency = cliConcurrency > 0
+                ? cliConcurrency
+                : (targetConfig.MaxConcurrentUploads > 0 ? targetConfig.MaxConcurrentUploads : 10);
+            var concurrencyInfo = effectiveConcurrency > 0 ? effectiveConcurrency.ToString() : "不限";
+
+            // Collect files: list mode OR directory scan mode.
+            List<string> files;
+            string sourceDescription;
+            if (!string.IsNullOrEmpty(listPath))
             {
-                Logger.Error($"目标文件夹不存在: {targetConfig.LocalFolderPath}");
-                return 1;
+                files = LoadFileList(listPath, targetConfig);
+                sourceDescription = $"文件列表: {listPath}";
+            }
+            else
+            {
+                if (!Directory.Exists(targetConfig.LocalFolderPath))
+                {
+                    Logger.Error($"目标文件夹不存在: {targetConfig.LocalFolderPath}");
+                    return 1;
+                }
+                files = SyncHelper.CollectFiles(targetConfig.LocalFolderPath,
+                    targetConfig.FileExtensions, targetConfig.ExcludeSuffixes);
+                sourceDescription = $"目录扫描: {targetConfig.LocalFolderPath}";
             }
 
-            Logger.Info($"============================================");
-            Logger.Info($"FullSync 启动");
-            Logger.Info($"  配置 ID:     {targetConfig.Id}");
-            Logger.Info($"  目标文件夹:  {targetConfig.LocalFolderPath}");
-            Logger.Info($"  存储桶:      {targetConfig.BucketName}");
-            Logger.Info($"  MinIO 端点:  {targetConfig.MinIOEndpoint}");
-            Logger.Info($"  并发数:      {(concurrency > 0 ? concurrency.ToString() : "不限")}");
-            Logger.Info($"  Worker:      {workerPath}");
-            Logger.Info($"============================================");
-
-            // Collect all files
-            var files = SyncHelper.CollectFiles(targetConfig.LocalFolderPath, targetConfig.FileExtensions, targetConfig.ExcludeSuffixes);
-
-            Logger.Info($"共发现 {files.Count} 个文件");
+            Logger.Info("============================================");
+            Logger.Info($"FullSync 启动（进程内多线程模式）");
+            Logger.Info($"  配置 ID:    {targetConfig.Id}");
+            Logger.Info($"  文件来源:   {sourceDescription}");
+            Logger.Info($"  存储桶:     {targetConfig.BucketName}");
+            Logger.Info($"  MinIO 端点: {targetConfig.MinIOEndpoint}");
+            Logger.Info($"  并发数:     {concurrencyInfo}");
+            Logger.Info($"  文件数:     {files.Count}");
+            Logger.Info("============================================");
 
             if (files.Count == 0)
             {
@@ -108,78 +127,134 @@ namespace FullSync
                 return 0;
             }
 
-            // Spawn workers with concurrency limit
-            var effectiveConcurrency = concurrency > 0 ? concurrency : int.MaxValue;
-            using (var semaphore = new Semaphore(effectiveConcurrency, effectiveConcurrency))
+            // Build a single MinioUploader instance, reused across all uploads
+            // (the underlying IMinioClient is thread-safe).
+            var uploader = new MinioUploader(
+                endpoint: targetConfig.MinIOEndpoint,
+                bucket: targetConfig.BucketName,
+                accessKey: targetConfig.AccessKey,
+                secretKey: targetConfig.SecretKey,
+                pathPrefix: targetConfig.PathPrefix ?? "");
+
+            var semaphoreMax = effectiveConcurrency > 0 ? effectiveConcurrency : int.MaxValue;
+            using (var semaphore = new SemaphoreSlim(semaphoreMax, semaphoreMax))
             {
-                var completed = 0;
-                var failed = 0;
-                var exceptions = 0;
-                var total = files.Count;
+                int completed = 0, failed = 0, exceptions = 0;
+                int total = files.Count;
+                int doneCount = 0;
                 var allDone = new ManualResetEvent(false);
+                var ct = CancellationToken.None;
 
                 foreach (var fullPath in files)
                 {
-                    semaphore.WaitOne();
-
-                    var relativePath = SyncHelper.GetRelativePath(targetConfig.LocalFolderPath, fullPath);
                     var capturedPath = fullPath;
-                    var capturedRelative = relativePath;
+                    var relativePath = SyncHelper.GetRelativePath(targetConfig.LocalFolderPath, fullPath);
+                    var objectKey = relativePath.Replace('\\', '/');
 
-                    ThreadPool.QueueUserWorkItem(state =>
+                    ThreadPool.QueueUserWorkItem(async _ =>
                     {
+                        await semaphore.WaitAsync().ConfigureAwait(false);
                         try
                         {
-                            var taskId = Guid.NewGuid().ToString("N").Substring(0, 8);
-                            Logger.Info($"[{taskId}] 开始上传: {capturedRelative}");
-
-                            var exitCode = SyncHelper.SpawnWorkerAndWait(
-                                workerPath, targetConfig, capturedPath, capturedRelative, "upload", taskId);
-
-                            if (exitCode == 0)
-                            {
-                                Interlocked.Increment(ref completed);
-                                Logger.Info($"[{taskId}] 上传成功: {capturedRelative}");
-                            }
+                            var ok = await uploader.UploadFileAsync(capturedPath, objectKey, ct).ConfigureAwait(false);
+                            if (ok) Interlocked.Increment(ref completed);
                             else
                             {
                                 Interlocked.Increment(ref failed);
-                                Logger.Warn($"[{taskId}] 上传失败: {capturedRelative} (exit={exitCode})");
+                                ErrorLog.Record(configId, capturedPath);
                             }
                         }
                         catch (Exception ex)
                         {
                             Interlocked.Increment(ref exceptions);
-                            Logger.Error($"上传异常: {capturedRelative}", ex);
+                            ErrorLog.Record(configId, capturedPath);
+                            Logger.Error($"上传异常: {objectKey}", ex);
                         }
                         finally
                         {
-                            var done = completed + failed + exceptions;
+                            var done = Interlocked.Increment(ref doneCount);
                             if (done % Math.Max(1, total / 20) == 0 || done == total)
                             {
                                 Logger.Info($"进度: {done}/{total} (成功: {completed}, 失败: {failed}, 异常: {exceptions})");
                             }
-
                             semaphore.Release();
-                            if (done >= total)
-                                allDone.Set();
+                            if (done >= total) allDone.Set();
                         }
                     });
                 }
 
                 allDone.WaitOne();
 
-                Logger.Info($"============================================");
+                Logger.Info("============================================");
                 Logger.Info($"FullSync 完成");
                 Logger.Info($"  总计:  {total}");
                 Logger.Info($"  成功:  {completed}");
                 Logger.Info($"  失败:  {failed}");
                 Logger.Info($"  异常:  {exceptions}");
-                Logger.Info($"============================================");
+                Logger.Info("============================================");
+
+                if (ErrorLog.RecordedCount > 0)
+                {
+                    Logger.Info($"失败文件路径已记录到: {ErrorLog.GetErrorFilePath(configId)}");
+                    Logger.Info($"重试命令: FullSync.exe --config-id {configId} --list \"{ErrorLog.GetErrorFilePath(configId)}\"");
+                }
 
                 return failed > 0 || exceptions > 0 ? 1 : 0;
             }
         }
 
+        /// <summary>
+        /// Reads a file list (one absolute path per line) and returns the valid,
+        /// non-ignored files. Blank lines and lines starting with '#' are treated as
+        /// comments. Missing files are logged and skipped.
+        /// </summary>
+        private static List<string> LoadFileList(string listPath, SyncConfig config)
+        {
+            if (!File.Exists(listPath))
+            {
+                Logger.Error($"文件列表不存在: {listPath}");
+                return new List<string>();
+            }
+
+            var result = new List<string>();
+            int skippedMissing = 0;
+            int skippedIgnored = 0;
+            int skippedBlank = 0;
+            int skippedComment = 0;
+
+            foreach (var rawLine in File.ReadAllLines(listPath))
+            {
+                var line = rawLine.Trim();
+                if (string.IsNullOrEmpty(line))
+                {
+                    skippedBlank++;
+                    continue;
+                }
+                if (line.StartsWith("#"))
+                {
+                    skippedComment++;
+                    continue;
+                }
+
+                if (!File.Exists(line))
+                {
+                    Logger.Warn($"列表中文件不存在，跳过: {line}");
+                    skippedMissing++;
+                    continue;
+                }
+
+                if (SyncHelper.ShouldIgnore(line, config.FileExtensions, config.ExcludeSuffixes))
+                {
+                    Logger.Info($"列表中文件被排除后缀/扩展名过滤，跳过: {line}");
+                    skippedIgnored++;
+                    continue;
+                }
+
+                result.Add(line);
+            }
+
+            Logger.Info($"读取文件列表 {listPath}: 有效={result.Count}, 跳过(不存在)={skippedMissing}, 跳过(过滤)={skippedIgnored}, 跳过(空行)={skippedBlank}, 跳过(注释)={skippedComment}");
+            return result;
+        }
     }
 }
