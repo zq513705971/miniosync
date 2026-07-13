@@ -22,12 +22,8 @@
     <!-- 引用项目内的公共库 -->
     <ProjectReference Include="..\MinioCommon\MinioCommon.csproj" />
   </ItemGroup>
-  <ItemGroup>
-    <!--
-      Minio 7.0.0 是支持 net8.0/net9.0/net10.0 的最新版 (2025-11-05).
-      ListObjectsAsync bug 已在 6.0.3 修复, 7.0.0 重写为 IAsyncEnumerable<ObjectItem>.
-      旧 4.0.0 的 MinioClient / WithEndpoint / PutObjectArgs / ListObjectsAsync API 已废弃.
-    -->
-    <PackageReference Include="Minio" Version="7.0.0" />
-  </ItemGroup>
+  <!--
+    Minio 包引用已迁移到 MinioCommon, 这里不再引用.
+    MinioUploader 类从 MinioCommon 命名空间引入.
+  -->
 </Project>

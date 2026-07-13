@@ -7,11 +7,16 @@ using MinioCommon;
 namespace SyncWorker
 {
     /// <summary>
-    /// SyncWorker — processes ONE file operation, then exits.
-    /// All parameters come from CLI args (no config file access).
-    /// Concurrency is managed by the daemon (MinioSync).
+    /// SyncWorker — single-file CLI tool that performs ONE MinIO operation, then exits.
     ///
-    /// Migrated from .NET Framework 4.6.1 / sync API to .NET 8 / async Task&lt;int&gt; Main.
+    /// 用途：供外部脚本/工具手工调用，一次处理一个文件（或一次目录级删除）。
+    /// 守护进程 MinioSync.exe 和全量同步 FullSync.exe 都不再调用本程序，
+    /// 它们在自己的进程内通过 MinioCommon.MinioUploader 多线程处理。
+    ///
+    /// 用法：
+    ///   SyncWorker.exe --endpoint URL --bucket NAME --access-key K --secret-key K
+    ///                    --file PATH --relative REL [--action upload|delete|delete-prefix]
+    ///                    [--path-prefix PREFIX] [--task-id ID]
     /// </summary>
     class Program
     {
@@ -25,7 +30,6 @@ namespace SyncWorker
 
             try
             {
-                // Parse arguments
                 string endpoint = null;
                 string bucket = null;
                 string accessKey = null;
@@ -60,13 +64,15 @@ namespace SyncWorker
 
                 tag = string.IsNullOrEmpty(taskId) ? "" : $"[{taskId}] ";
 
-                // Validate
-                if (string.IsNullOrEmpty(endpoint)) { Logger.Error($"{tag}缺少必要参数: --endpoint"); return 1; }
-                if (string.IsNullOrEmpty(bucket)) { Logger.Error($"{tag}缺少必要参数: --bucket"); return 1; }
-                if (string.IsNullOrEmpty(accessKey)) { Logger.Error($"{tag}缺少必要参数: --access-key"); return 1; }
-                if (string.IsNullOrEmpty(secretKey)) { Logger.Error($"{tag}缺少必要参数: --secret-key"); return 1; }
-                if (action != "delete-prefix" && string.IsNullOrEmpty(filePath)) { Logger.Error($"{tag}缺少必要参数: --file"); return 1; }
-                if (string.IsNullOrEmpty(relativePath)) { Logger.Error($"{tag}缺少必要参数: --relative"); return 1; }
+                // Validate required args
+                if (string.IsNullOrEmpty(endpoint))   { Logger.Error($"{tag}缺少必要参数: --endpoint");   return 1; }
+                if (string.IsNullOrEmpty(bucket))     { Logger.Error($"{tag}缺少必要参数: --bucket");     return 1; }
+                if (string.IsNullOrEmpty(accessKey))  { Logger.Error($"{tag}缺少必要参数: --access-key");return 1; }
+                if (string.IsNullOrEmpty(secretKey))  { Logger.Error($"{tag}缺少必要参数: --secret-key");return 1; }
+                if (action != "delete-prefix" && string.IsNullOrEmpty(filePath))
+                                                    { Logger.Error($"{tag}缺少必要参数: --file");       return 1; }
+                if (string.IsNullOrEmpty(relativePath))
+                                                    { Logger.Error($"{tag}缺少必要参数: --relative");   return 1; }
 
                 if (action != "upload" && action != "delete" && action != "delete-prefix")
                 {
@@ -77,16 +83,14 @@ namespace SyncWorker
                 endpoint = endpoint.TrimEnd('/');
                 Logger.Info($"{tag}SyncWorker: action={action}, file={relativePath}");
 
-                var uploader = new MinioUploader(endpoint, bucket, accessKey, secretKey, pathPrefix: pathPrefix, tag: tag);
+                var uploader = new MinioUploader(endpoint, bucket, accessKey, secretKey,
+                    pathPrefix: pathPrefix, tag: tag);
 
-                // SyncWorker is a one-shot process: no cooperative cancellation in this entry point.
-                // (Ctrl+C is irrelevant — the parent daemon has already torn us down by then.)
                 var ct = CancellationToken.None;
-
                 bool success;
+
                 if (action == "delete-prefix")
                 {
-                    // prefix comes from --relative (converted to forward slashes)
                     var prefix = relativePath.Replace('\\', '/');
                     success = await uploader.DeleteObjectsByPrefixAsync(prefix, ct).ConfigureAwait(false);
                 }
@@ -95,7 +99,7 @@ namespace SyncWorker
                     var objectKey = relativePath.Replace('\\', '/');
                     success = await uploader.DeleteObjectAsync(objectKey, ct).ConfigureAwait(false);
                 }
-                else
+                else // upload
                 {
                     var objectKey = relativePath.Replace('\\', '/');
                     if (!File.Exists(filePath))
