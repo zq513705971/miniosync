@@ -1,6 +1,6 @@
 # MinioSync
 
-本地文件夹到 MinIO 存储桶的实时同步工具。基于 .NET Framework 4.6.1。
+本地文件夹到 MinIO / S3 兼容存储的实时同步工具。基于 **.NET 8** 构建，发布产物是**自包含单文件 EXE**，目标服务器**无需预装任何 .NET 运行时**。
 
 支持文件创建/修改/删除/重命名的实时监控与同步，包含**子目录递归同步**和**目录删除批量清理**。
 
@@ -24,27 +24,30 @@
 
 ```
 MinioSync/
-├── MinioCommon/           # 公共类库（配置模型、日志、辅助方法）
-│   ├── SyncConfig.cs      # 单个同步任务配置模型
-│   ├── ConfigFile.cs      # 配置文件根模型（Version + Configs）
-│   ├── ConfigManager.cs   # 配置加载/校验
-│   ├── SyncHelper.cs      # Worker 启动、路径处理、扩展名过滤
-│   └── Logger.cs          # 按日期切分的日志器
+├── MinioCommon/               # 公共类库（配置模型、日志、辅助方法）
+│   ├── SyncConfig.cs          # 单个同步任务配置模型
+│   ├── ConfigFile.cs          # 配置文件根模型（Version + Configs）
+│   │                          #   + JsonSerializable 部分类（元数据在编译期生成）
+│   ├── ConfigManager.cs       # 配置加载/校验（System.Text.Json + source generator）
+│   ├── SyncHelper.cs          # Worker 启动、路径处理、扩展名过滤
+│   └── Logger.cs              # 按日期切分的日志器
 │
-├── MinioSync/             # 守护进程
-│   └── FolderMonitor.cs   # FileSystemWatcher + 批量定时器
+├── MinioSync/                 # 守护进程
+│   ├── Program.cs             # 配置加载 + 启动 FileSystemWatcher
+│   └── FolderMonitor.cs       # FileSystemWatcher + 批量定时器
 │
-├── SyncWorker/            # 单文件同步 Worker
-│   ├── Program.cs         # 命令行参数解析
-│   └── MinioUploader.cs   # 上传/删除（列表用自实现 AWS SigV4 HTTP）
+├── SyncWorker/                # 单文件同步 Worker（独立进程）
+│   ├── Program.cs             # 命令行参数解析（async Main）
+│   └── MinioUploader.cs       # 上传/删除/批量删除（Minio SDK 7.0.0）
 │
-├── FullSync/              # 全量同步工具
-│   └── Program.cs         # 一次性遍历本地目录并发上传
+├── FullSync/                  # 全量同步工具
+│   └── Program.cs             # 一次性遍历本地目录并发上传
 │
-├── packages/              # NuGet 包还原目录
-├── deploy/                # 构建产物输出目录（部署用）
-├── config.json            # 配置文件
-└── build.ps1              # 构建脚本
+├── Directory.Build.props      # 解决方案级 MSBuild 配置（所有 csproj 自动继承）
+│
+├── deploy/                    # publish 输出目录（部署用）
+├── config.json                # 配置文件
+└── publish.ps1                # 发布脚本（自包含 + 单文件）
 ```
 
 ---
@@ -63,49 +66,65 @@ MinioSync/
 
 ## 运行环境
 
-- Windows 7+
-- .NET Framework 4.6.1
-- MSBuild 14.0（VS 2015 Build Tools）或更高
-- MinIO 服务端（任意 S3 兼容实现均可）
+**目标运行环境**（发布产物运行所需）：
+- Windows 10+ / Windows Server 2016+（.NET 8 最低支持版本）
+- 无需任何预装的 .NET 运行时（自包含单文件 EXE 已捆绑 .NET 8 runtime）
+- MinIO 服务端，或任意 S3 兼容服务（AWS S3、阿里云 OSS、Ceph RGW 等）
 
-**NuGet 依赖**（已在 `SyncWorker/packages.config` 中声明）：
-- Minio 4.0.0（仅用于单文件上传/删除）
-- Crc32.NET 1.2.0
-- Newtonsoft.Json 13.0.1
-- System.Reactive 4.0.0
-- System.Reactive.Linq 4.0.0
-- System.ValueTuple 4.4.0
+**构建机**（开发者本地需要）：
+- Windows 10+ / Windows Server 2019+
+- .NET 8 SDK（[下载](https://dotnet.microsoft.com/download/dotnet/8.0)）
+- 约 250 MB 磁盘空间
 
-构建时使用 `.nuget\nuget.exe` 还原依赖到 `packages/` 目录。
+**NuGet 依赖**（在 csproj 中用 `PackageReference` 管理，存于全局 `%USERPROFILE%\.nuget\packages\`）：
+- Minio 7.0.0（仅 SyncWorker 直接使用）
 
 ---
 
 ## 构建
 
-### 使用 build.ps1
+### 使用 publish.ps1（推荐）
 
 ```powershell
-.\build.ps1
+.\publish.ps1
 ```
 
-构建脚本会：
-1. 用 MSBuild 14.0 编译解决方案
-2. 清空 `deploy/` 目录
-3. 复制所有可执行文件和 DLL 到 `deploy/`
+发布脚本会：
+1. `dotnet restore MinioSync.sln`（按 `csproj` 自动还原 NuGet 包到全局缓存）
+2. `dotnet build MinioSync.sln -c Release`（Release 配置编译）
+3. `dotnet publish` 三个 Exe 项目（`-r win-x64`，自包含，单文件，压缩）
+4. 清空 `deploy/` 目录，把所有 EXE 与 `config.json` 写入
 
-### 手动构建
+产物：`deploy\` 下三个单文件 EXE（每个约 30–35 MB，**压缩后**），包含 .NET 8 runtime + Minio SDK + System.Text.Json + 全部依赖。
+
+### 手动发布（等效命令）
 
 ```powershell
-& "C:\Program Files (x86)\MSBuild\14.0\Bin\MSBuild.exe" `
-    "MinioSync.sln" /p:Configuration=Debug /t:Rebuild
+dotnet restore MinioSync.sln -r win-x64
+dotnet build   MinioSync.sln -c Release
+dotnet publish MinioSync\MinioSync.csproj -c Release -r win-x64 -o deploy\
+dotnet publish SyncWorker\SyncWorker.csproj -c Release -r win-x64 -o deploy\
+dotnet publish FullSync\FullSync.csproj     -c Release -r win-x64 -o deploy\
+copy /Y config.json deploy\
 ```
 
-部署时需要拷贝以下文件到同一目录：
-- `MinioSync.exe`
-- `SyncWorker.exe`
-- `FullSync.exe`
-- `MinioCommon.dll`
-- `config.json`
+> 注意：不要传 `--no-build`，否则 GenerateBundle 任务找不到 `singlefilehost.exe` 中间文件。
+
+### 部署
+
+把整个 `deploy\` 目录复制到目标服务器任意位置即可。**无需在目标机器安装任何 .NET 运行时**。结构：
+
+```
+deploy/
+├── MinioSync.exe            # 守护进程，自包含（含全部依赖）
+├── SyncWorker.exe           # Worker，自包含（含 Minio SDK 7.0.0）
+├── FullSync.exe             # 全量同步工具，自包含（含全部依赖）
+├── config.json              # 配置
+└── *.runtimeconfig.json     # 运行时配置（一般不需修改）
+```
+
+> `MinioCommon.dll`、`Minio.dll`、`System.Reactive.dll` 等依赖已通过 `PublishSingleFile` 打包进每个 EXE 内部，deploy/ 目录不会看到额外的 DLL 文件。
+
 
 ---
 
@@ -312,16 +331,16 @@ SyncWorker.exe ^
 
 ### 删除处理
 
-**单文件删除**：FSW 触发 `Deleted` → 加入 `delete` 队列 → Worker 调用 `RemoveObjectAsync`。
+**单文件删除**：FSW 触发 `Deleted` → 加入 `delete` 队列 → Worker 调用 `_client.DeleteObjectAsync(...)`。
 
 **目录删除**（关键功能）：FSW 对目录删除只触发一个 `Deleted` 事件（不会为目录内的每个文件单独触发）：
 
 1. FSW 触发目录的 `Deleted`
 2. 检测到路径无扩展名 → 识别为目录删除
 3. 加入 `delete-prefix` 队列（带前缀，如 `例子/`）
-4. Worker 调用 `DeleteObjectsByPrefix()`：
-   - **用 `HttpClient` + 手写 AWS SigV4 列出该前缀下的所有对象**（绕开 Minio SDK 4.0.0 的 `ListObjectsAsync` 签名 bug）
-   - 逐个调用 `RemoveObjectAsync` 删除
+4. Worker 调用 `DeleteObjectsByPrefixAsync()`：
+   - 用 **Minio SDK 7.0.0** 的 `ListObjectsEnumAsync` 列出该前缀下的所有对象（`IAsyncEnumerable<Item>`；该方法在 Minio SDK 6.0.3 修复了 4.0.0 时代的 SIGV4 签名 bug）
+   - 用 SDK `RemoveObjectsAsync` **一次性批量删除**（最多 1000 个）；批量失败时回退到逐个删除以最大化成功率
 
 ### 并发模型
 
@@ -352,42 +371,55 @@ SyncWorker.exe ^
 
 ## 常见问题
 
-### 1. 编译失败：缺少 SDK
+### 1. 构建失败：缺少 .NET 8 SDK
 
-本项目使用**老式 csproj + packages.config**，不依赖 .NET SDK。只需 MSBuild 14.0（VS 2015 Build Tools）+ .NET Framework 4.6.1 引用程序集。
-
-构建前先还原 NuGet 包：
+请安装 .NET 8 SDK：
 
 ```cmd
-.nuget\nuget.exe restore MinioSync.sln
+# 推荐使用 winget 安装（Windows 11 / Win10 最新版自带 winget）
+winget install --id Microsoft.DotNet.SDK.8 -e --source winget --accept-package-agreements --accept-source-agreements
 ```
 
-### 2. 运行时找不到 DLL
+或直接下载：[https://dotnet.microsoft.com/download/dotnet/8.0](https://dotnet.microsoft.com/download/dotnet/8.0)
 
-确认 `MinioCommon.dll`、`Minio.dll`、`Newtonsoft.Json.dll`、`System.Reactive.dll` 等 NuGet 包都在 `deploy/` 目录。
+安装后验证：
+
+```cmd
+dotnet --version
+```
+
+应输出 `8.x.x`。
+
+### 2. 是否需要在服务器上装 .NET？
+
+**不需要**。`publish.ps1` 默认发布 `self-contained + single file` 模式，每个 EXE 文件已经包含 .NET 8 runtime + 全部 NuGet 依赖，目标服务器开箱即用。
+
+如果想去掉 .NET runtime 减小体积（可去掉 ~15 MB/每个 EXE），在 `publish.ps1` 中把 `$publishProps` 里的 `'-p:SelfContained=true'` 删掉，并确保目标机器已装 .NET 8 Runtime 或更高。**一般不推荐**：自己打包比依赖系统更可控。
 
 ### 3. 子目录删除没有同步到 MinIO
 
 检查：
 - `config.json` 中 `Enable: true`
 - 日志中是否出现 `SyncWorker: action=delete-prefix`
-- MinIO 中该前缀下确实有对象（`delete-prefix` 通过 HTTP 列出该前缀的对象并删除）
+- MinIO 中该前缀下确实有对象（`delete-prefix` 通过 SDK 列出并**批量**删除该前缀下的对象）
 
 ### 4. 403 SignatureDoesNotMatch
 
-如果列表对象时报这个错误，说明 MinIO 服务端拒绝了 SigV4 签名。检查：
+如果上传或列表时报这个错误，说明服务端拒绝了 SigV4 签名。检查：
 - AccessKey/SecretKey 是否正确
-- MinIO 服务端时间是否与本机时间偏差过大（>15 分钟会导致签名失效）
+- 目标服务端时间与本机时间偏差是否过大（>15 分钟会导致签名失效）
+- 如使用 MinIO，确认 `MinIOEndpoint` 是 `http://...`（非 `https`）且端口可达
 
-### 5. Minio SDK 兼容性
+### 5. Minio SDK 已升级到 7.0.0，为什么？
 
-项目使用 **Minio 4.0.0**，原因是该版本原生支持 `net46`（旧 SDK 风格），构建时无需 .NET SDK。新版 MinIO（v7+）只支持 `netstandard2.0`，需要 SDK 风格项目。
-
-**注意**：`ListObjectsAsync` 在 Minio SDK 4.0.0 上签名计算有 bug（PUT/DELETE 都正常，唯独列表 GET 请求的签名错误）。本项目绕开这个 bug，列表改用 `HttpClient` 直接调用 MinIO REST API 并手写 AWS SigV4 签名。
+项目已迁移到 .NET 8，可以原生使用新版 Minio SDK：
+- **Minio 7.0.0**（2025-11 发布）原生支持 `net8.0/net9.0/net10.0`
+- **ListObjectsEnumAsync 签名 bug** 已在 6.0.3 修复（`IAsyncEnumerable<Item>`）；7.0.0 进一步重写为类型完善的异步序列
+- 因此 `MinioUploader.cs` 中原本手写的 ~200 行 AWS SigV4 + XML 解析代码全部删除，列表完全委托给 SDK
 
 ### 6. 中文文件名/路径
 
-完全支持中文路径。对象 Key 在 MinIO 中使用 UTF-8 编码，路径分隔符统一转换为 `/`。
+完全支持中文路径。对象 Key 在 MinIO / S3 中使用 UTF-8 编码，路径分隔符统一转换为 `/`。
 
 ---
 

@@ -1,13 +1,18 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using Newtonsoft.Json;
+using System.Text.Json;
+using MinioCommon;
 
 namespace MinioCommon
 {
     /// <summary>
     /// Loads and validates JSON config from a single configuration file
     /// containing an array of sync task definitions.
+    ///
+    /// Migrated from Newtonsoft.Json to System.Text.Json.
+    /// Deserialization goes through <see cref="AppJsonContext"/> which is
+    /// source-generated at build time (no runtime reflection).
     /// </summary>
     public class ConfigManager
     {
@@ -20,7 +25,7 @@ namespace MinioCommon
 
         /// <summary>
         /// Loads all valid configs from the single configuration file.
-        /// The file must contain a JSON array of SyncConfig objects.
+        /// The file must contain a JSON object with Version + Configs (see ConfigFile).
         /// Invalid configs are logged and skipped.
         /// </summary>
         public List<SyncConfig> LoadAllConfigs()
@@ -38,7 +43,12 @@ namespace MinioCommon
             try
             {
                 var json = File.ReadAllText(_configFilePath);
-                var configFile = JsonConvert.DeserializeObject<ConfigFile>(json);
+
+                // Use the source-generated context (no reflection, static methods).
+                // The generated JsonSerializerOptions honour PropertyNameCaseInsensitive=false
+                // by default, matching the PascalCase schema in config.json.
+                var options = AppJsonContext.Default.Options;
+                var configFile = JsonSerializer.Deserialize<ConfigFile>(json, options);
 
                 if (configFile?.Configs == null || configFile.Configs.Count == 0)
                 {

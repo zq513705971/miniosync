@@ -1,0 +1,60 @@
+<Project>
+
+  <!--
+    MinioSync 解决方案级统一配置 (Directory.Build.props)
+    ==============================================
+    此文件由 MSBuild 在所有 csproj 评估时**自动**加载，位于解决方案根目录。
+    任何 csproj 中相同属性都可以 override 这里的值。
+    参考: https://learn.microsoft.com/en-us/visualstudio/msbuild/customize-by-directory
+
+    重要：此文件**只放 build-time 通用属性**。任何 publish-time / RID-specific 的属性
+    （SelfContained / RuntimeIdentifier / PublishSingleFile 等）由 publish.ps1 在命令行
+    传入。原因是：类库项目（MinioCommon）不应该被强制指定 RID，否则 restore 时会找不到
+    对应的 net8.0/win-x64 资产文件，触发 NETSDK1047。
+  -->
+
+  <PropertyGroup>
+
+    <!-- ===== 通用语言/平台 ===== -->
+
+    <!-- 解决方案统一目标 .NET 8 LTS, x64 位 -->
+    <TargetFramework>net8.0</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <LangVersion>12.0</LangVersion>
+    <!--
+      Nullable 设成 'annotations' 而非 'enable':
+      - 'annotations' 仍让 `?` 注解生效（编译期分析可用），但
+      - 不会把现有 `string x = null;` 这种旧写法变成 CS8600/8601 警告洪水。
+      - 这是从 .NET Framework 4.x 老代码升级到 .NET 8 最稳妥的中间态。
+      - 后续若想全局开启严格可空分析，可改成 'enable' 并配合 #pragma 局部修复。
+    -->
+    <Nullable>annotations</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <!-- TreatWarningsAsErrors 开启后, 任何 warning 会变成 error 阻断构建. 暂时不开, 后续稳定后可改. -->
+
+    <!--
+      AssemblyInfo 由 SDK 自动从 csproj 的 <PropertyGroup> 生成
+      (Title / Product / Company / Copyright 等等).
+      这里保留项目级 License / Version 控制, 但不写 AssemblyTitle 等避免冲突.
+      GUID 已在各 csproj 显式定义 (旧 AssemblyInfo.cs 中保留的 ProjectGuid).
+    -->
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <GenerateAssemblyFileVersionAttribute>true</GenerateAssemblyFileVersionAttribute>
+    <GenerateAssemblyVersionAttribute>true</GenerateAssemblyVersionAttribute>
+
+    <!-- 无项目对 PDB 分离部署有要求, 嵌入. 调试更易. -->
+    <DebugType>embedded</DebugType>
+
+  </PropertyGroup>
+
+  <!--
+    publish 属性不再在此处集中设置。改用 publish.ps1 在命令行传入，避免类库项目被
+    错误地强制为 RID-specific。
+
+    标准 publish 命令（参考 publish.ps1）：
+      dotnet publish X.csproj  配置 Release  RID win-x64  自包含 (见 publish.ps1)
+      关键属性: PublishSingleFile / EnableCompressionInSingleFile /
+      IncludeNativeLibrariesForSelfExtract / PublishReadyToRun=false / PublishTrimmed=false
+  -->
+
+</Project>

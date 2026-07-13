@@ -1,5 +1,7 @@
 ﻿using System;
 using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
 using MinioCommon;
 
 namespace SyncWorker
@@ -8,10 +10,12 @@ namespace SyncWorker
     /// SyncWorker — processes ONE file operation, then exits.
     /// All parameters come from CLI args (no config file access).
     /// Concurrency is managed by the daemon (MinioSync).
+    ///
+    /// Migrated from .NET Framework 4.6.1 / sync API to .NET 8 / async Task&lt;int&gt; Main.
     /// </summary>
     class Program
     {
-        static int Main(string[] args)
+        static async Task<int> Main(string[] args)
         {
             var baseDir = AppDomain.CurrentDomain.BaseDirectory;
             var logsDir = Path.Combine(baseDir, "logs");
@@ -75,17 +79,21 @@ namespace SyncWorker
 
                 var uploader = new MinioUploader(endpoint, bucket, accessKey, secretKey, pathPrefix: pathPrefix, tag: tag);
 
+                // SyncWorker is a one-shot process: no cooperative cancellation in this entry point.
+                // (Ctrl+C is irrelevant — the parent daemon has already torn us down by then.)
+                var ct = CancellationToken.None;
+
                 bool success;
                 if (action == "delete-prefix")
                 {
                     // prefix comes from --relative (converted to forward slashes)
                     var prefix = relativePath.Replace('\\', '/');
-                    success = uploader.DeleteObjectsByPrefix(prefix);
+                    success = await uploader.DeleteObjectsByPrefixAsync(prefix, ct).ConfigureAwait(false);
                 }
                 else if (action == "delete")
                 {
                     var objectKey = relativePath.Replace('\\', '/');
-                    success = uploader.DeleteObject(objectKey);
+                    success = await uploader.DeleteObjectAsync(objectKey, ct).ConfigureAwait(false);
                 }
                 else
                 {
@@ -95,7 +103,7 @@ namespace SyncWorker
                         Logger.Warn($"{tag}文件不存在，跳过: {relativePath}");
                         return 0;
                     }
-                    success = uploader.UploadFile(filePath, objectKey);
+                    success = await uploader.UploadFileAsync(filePath, objectKey, ct).ConfigureAwait(false);
                 }
 
                 Logger.Info($"{tag}SyncWorker 完成: {(success ? "成功" : "失败")}");
