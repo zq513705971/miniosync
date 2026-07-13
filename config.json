@@ -11,7 +11,10 @@
       "SecretKey": "admin123456",
       "SyncIntervalSeconds": 60,
       "FileStabilitySeconds": 3,
-      "FileExtensions": [".txt", ".csv", ".json", ".log"]
+      "FileExtensions": [".txt", ".csv", ".json", ".log"],
+      "ExcludeSuffixes": [".tmp", ".bak", ".swp"],
+      "PathPrefix": "myproject/",
+      "MaxConcurrentUploads": 10
     }
   ]
 }

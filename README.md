@@ -24,24 +24,25 @@
 
 ```
 MinioSync/
-├── MinioCommon/               # 公共类库（配置模型、日志、辅助方法）
+├── MinioCommon/               # 公共类库（配置模型、MinIO 客户端、日志、辅助方法）
 │   ├── SyncConfig.cs          # 单个同步任务配置模型
 │   ├── ConfigFile.cs          # 配置文件根模型（Version + Configs）
 │   │                          #   + JsonSerializable 部分类（元数据在编译期生成）
 │   ├── ConfigManager.cs       # 配置加载/校验（System.Text.Json + source generator）
-│   ├── SyncHelper.cs          # Worker 启动、路径处理、扩展名过滤
-│   └── Logger.cs              # 按日期切分的日志器
+│   ├── SyncHelper.cs          # 路径处理、扩展名过滤、SpawnWorkerAndWait（供外部工具用）
+│   ├── MinioUploader.cs       # 上传/删除/批量删除（Minio SDK 7.0.0），三个 Exe 共享
+│   ├── Logger.cs              # 按日期切分的日志器
+│   └── ErrorLog.cs            # 上传失败路径记录（按 configId+日期+PID 分文件）
 │
-├── MinioSync/                 # 守护进程
+├── MinioSync/                 # 守护进程（实时监控）
 │   ├── Program.cs             # 配置加载 + 启动 FileSystemWatcher
-│   └── FolderMonitor.cs       # FileSystemWatcher + 批量定时器
+│   └── FolderMonitor.cs       # FSW + 批量定时器 + 进程内 ThreadPool 多线程上传
 │
-├── SyncWorker/                # 单文件同步 Worker（独立进程）
-│   ├── Program.cs             # 命令行参数解析（async Main）
-│   └── MinioUploader.cs       # 上传/删除/批量删除（Minio SDK 7.0.0）
+├── SyncWorker/                # 单文件 CLI 工具（供外部脚本手工调用，不被 MinioSync/FullSync 调用）
+│   └── Program.cs             # 命令行参数解析（async Main），调用 MinioCommon.MinioUploader
 │
-├── FullSync/                  # 全量同步工具
-│   └── Program.cs             # 一次性遍历本地目录并发上传
+├── FullSync/                  # 一次性全量同步工具
+│   └── Program.cs             # 目录扫描/文件列表(--list) + 进程内 ThreadPool 多线程上传 + 失败记录
 │
 ├── Directory.Build.props      # 解决方案级 MSBuild 配置（所有 csproj 自动继承）
 │
@@ -54,13 +55,18 @@ MinioSync/
 
 ## 核心组件
 
-| 组件 | 用途 |
-|---|---|
-| **MinioSync.exe** | 守护进程，长期运行，监控本地文件夹变化 |
-| **SyncWorker.exe** | 单文件同步进程，处理一次上传/删除后退出；由守护进程和 FullSync 调用 |
-| **FullSync.exe** | 一次性全量同步工具，遍历目录并发上传所有匹配的文件 |
+| 组件 | 场景 | 进程模型 |
+|---|---|---|
+| **MinioSync.exe** | 实时监控本地文件夹，自动同步到 MinIO | **进程内多线程**：FSW 检测变化 → ThreadPool + SemaphoreSlim → 进程内调用 `MinioUploader` |
+| **FullSync.exe** | 一次性全量初始化（首次部署、补传历史文件），也支持 `--list` 文件列表模式恢复特定文件集 | **进程内多线程**：遍历目录或读取文件列表 → ThreadPool + SemaphoreSlim → 进程内调用 `MinioUploader`，上传失败自动记录到 ErrorLog |
+| **SyncWorker.exe** | 外部脚本/工具手工调用，一次处理一个文件 | 单进程单文件 CLI，调用 `MinioUploader` |
 
-**进程模型**：守护进程发现文件变更 → 启动 SyncWorker 子进程处理 → Worker 退出。这样主进程不阻塞，单个 Worker 崩溃不会影响其他文件。
+**关键设计**：`MinioUploader`（含 MinioClient 连接）在 MinioCommon 类库，三个 Exe 都引用。守护进程和全量同步**不再 spawn 子进程**，避免每次操作都启停 .NET 进程的开销；MinioClient 复用、连接池保温，多线程间通过 `SemaphoreSlim` 限并发。SyncWorker 保留独立进程模式，仅用于**外部一次性调用**（如运维手动触发某个特定文件的上传/删除）。
+
+三者职责互不重叠：
+- **MinioSync** = 监控（持续运行）
+- **FullSync** = 初始化 + 文件列表恢复（一次性）
+- **SyncWorker** = 外部调用接口（手工/脚本触发）
 
 ---
 
@@ -77,7 +83,7 @@ MinioSync/
 - 约 250 MB 磁盘空间
 
 **NuGet 依赖**（在 csproj 中用 `PackageReference` 管理，存于全局 `%USERPROFILE%\.nuget\packages\`）：
-- Minio 7.0.0（仅 SyncWorker 直接使用）
+- Minio 7.0.0（引用在 MinioCommon，三个 Exe 通过 MinioCommon 共享使用）
 
 ---
 
@@ -150,7 +156,8 @@ deploy/
       "FileStabilitySeconds": 3,
       "FileExtensions": [".txt", ".csv", ".json", ".log"],
       "ExcludeSuffixes": [".tmp", ".bak", ".swp"],
-      "PathPrefix": "myproject"
+      "PathPrefix": "myproject/",
+      "MaxConcurrentUploads": 10
     }
   ]
 }
@@ -173,7 +180,8 @@ deploy/
 | `FileStabilitySeconds` | 否 | 文件稳定等待时长（无写事件后多久触发上传），默认 `3` |
 | `FileExtensions` | 否 | 要同步的扩展名白名单；为空/null 表示全部 |
 | `ExcludeSuffixes` | 否 | 要排除的文件后缀列表（如 `[".tmp", ".bak"]`），叠加在内置排除（`.tmp`、`.bak`、`.~lock`、`~$*`）之上 |
-| `PathPrefix` | 否 | 上传到 MinIO 时给对象 Key 增加的前缀，如 `"myproject/"`，未设置则对象 Key 等于相对路径 |
+| `PathPrefix` | 否 | 上传到 MinIO 时给对象 Key 增加的前缀，如 `"myproject/"`。支持多级路径，如 `"project-a/data/images/"`；未设置则对象 Key 等于相对路径 |
+| `MaxConcurrentUploads` | 否 | 进程内并发上传数（`SemaphoreSlim` 上限）。用于 MinioSync 和 FullSync 的多线程节流，默认 `10`，传 `0` 表示不限 |
 
 ---
 
@@ -188,7 +196,7 @@ MinioSync.exe
 或指定自定义路径：
 
 ```cmd
-MinioSync.exe --config D:\configs\myconfig.json --logs-dir D:\logs --worker-path D:\bin\SyncWorker.exe
+MinioSync.exe --config D:\configs\myconfig.json --logs-dir D:\logs
 ```
 
 **参数**：
@@ -197,15 +205,33 @@ MinioSync.exe --config D:\configs\myconfig.json --logs-dir D:\logs --worker-path
 |---|---|---|
 | `--config <path>` | `<exeDir>\config.json` | 配置文件路径 |
 | `--logs-dir <path>` | `<exeDir>\logs` | 日志目录 |
-| `--worker-path <path>` | `<exeDir>\SyncWorker.exe` | SyncWorker 路径 |
 
 按 `Ctrl+C` 优雅退出。
 
 ### 2. 全量同步
 
+**目录扫描模式**（默认）—— 扫描配置 `LocalFolderPath` 下所有匹配文件：
+
 ```cmd
 FullSync.exe --config-id project-a
 ```
+
+**文件列表模式** —— `--list <path>` 指定一个文本文件，每行一个文件的完整路径，仅处理列表中的文件：
+
+```cmd
+FullSync.exe --config-id project-a --list C:\lists\backup.txt
+```
+
+`backup.txt` 示例（空行和 `#` 开头视为注释）：
+
+```
+# 2026-07-13 待恢复文件
+E:\Data\docs\report.pdf
+E:\Data\docs\figure.png
+E:\Backups\重要合同.docx
+```
+
+列表中不存在的文件会被跳过（warn 级别），匹配 `FileExtensions` / `ExcludeSuffixes` 的会被过滤掉。处理逻辑（限并发、MinioClient 复用、上传结果统计）跟目录模式一致；相对路径仍按配置的 `LocalFolderPath` 计算（不在目录下的文件用全路径作为对象 Key）。
 
 **参数**：
 
@@ -213,13 +239,29 @@ FullSync.exe --config-id project-a
 |---|---|---|
 | `--config-id <id>` | 是 | 配置文件中的 `Id` |
 | `--config <path>` | 否 | 配置文件路径（默认 `<exeDir>\config.json`） |
-| `--concurrency` / `-c <n>` | 否 | 并发 Worker 数，默认 `10`，传 `0` 表示不限制 |
-| `--worker-path <path>` | 否 | SyncWorker 路径 |
+| `--list <path>` | 否 | 文件列表路径（每行一个文件完整路径）。未传则走目录扫描模式 |
+| `--concurrency` / `-c <n>` | 否 | 进程内并发上传数；未传时用配置 `MaxConcurrentUploads`（默认 10），传 `0` 表示不限 |
 | `--logs-dir <path>` | 否 | 日志目录 |
 
-### 3. SyncWorker（一般不直接调用）
+#### 上传失败重试
 
-Worker 是守护进程和 FullSync 的子进程，由父进程传入参数：
+FullSync 运行中上传失败的文件路径会自动记录到错误日志文件：
+
+```
+logs/error-YYYY-MM-DD-{configId}-{pid}.txt
+```
+
+例如：`logs/error-2026-07-13-project-a-8272.txt`。每行一个文件完整路径，可用作 `--list` 的参数进行重试：
+
+```cmd
+FullSync.exe --config-id project-a --list logs\error-2026-07-13-project-a-8272.txt
+```
+
+错误文件名包含 `configId`，多配置运行时可以从文件名直接看出是哪个配置的失败记录。
+
+### 3. SyncWorker（供外部脚本/工具手工调用）
+
+**注意**：守护进程 MinioSync 和全量工具 FullSync **不再调用** SyncWorker。SyncWorker 仅供外部脚本、运维手工或第三方工具做**单文件一次性操作**（上传/删除）。
 
 ```cmd
 SyncWorker.exe ^
@@ -279,8 +321,22 @@ SyncWorker.exe ^
 
 目录删除时也自动加前缀：本地 `sub/` 被删 → MinIO 上删除 `project-a/sub/` 下所有对象。
 
+**多层前缀**：`PathPrefix` 直接支持多级文件夹，按需拼接即可。例如：
+
+```json
+"PathPrefix": "project-a/data/images/"
+```
+
+| 本地文件 | 相对路径 | 上传后的对象 Key |
+|---|---|---|
+| `E:\Data\project-a\doc.txt` | `doc.txt` | `project-a/data/images/doc.txt` |
+| `E:\Data\project-a\sub\a.csv` | `sub/a.csv` | `project-a/data/images/sub/a.csv` |
+
+目录删除时前缀同样自动叠加：本地 `sub/` 被删 → MinIO 上删除 `project-a/data/images/sub/` 下所有对象。
+
 注意：
 - 自动补 `/`：`"project-a"` 和 `"project-a/"` 等价
+- 多级路径用 `/` 分隔即可，如 `"level1/level2/level3/"`
 - 空字符串或未设置 → 对象 Key 等于相对路径（默认行为）
 
 ### ExcludeSuffixes
@@ -337,15 +393,37 @@ SyncWorker.exe ^
 
 1. FSW 触发目录的 `Deleted`
 2. 检测到路径无扩展名 → 识别为目录删除
-3. 加入 `delete-prefix` 队列（带前缀，如 `例子/`）
-4. Worker 调用 `DeleteObjectsByPrefixAsync()`：
+3. 入队为 `delete-prefix` 任务，带前缀（如 `例子/`）
+4. 进程内调用 `MinioUploader.DeleteObjectsByPrefixAsync()`：
    - 用 **Minio SDK 7.0.0** 的 `ListObjectsEnumAsync` 列出该前缀下的所有对象（`IAsyncEnumerable<Item>`；该方法在 Minio SDK 6.0.3 修复了 4.0.0 时代的 SIGV4 签名 bug）
    - 用 SDK `RemoveObjectsAsync` **一次性批量删除**（最多 1000 个）；批量失败时回退到逐个删除以最大化成功率
 
-### 并发模型
+### 并发模型（进程内多线程）
 
-- **守护进程**：发现稳定的文件后立即 spawn Worker（无限并发，但每个 Worker 独立进程，不会阻塞主进程）
-- **FullSync**：通过 `Semaphore` 控制并发数（默认 10）
+守护进程和 FullSync 都采用**进程内多线程**模式，**不再 spawn 任何子进程**。`MinioUploader` 实例（包括其底层的 MinioClient 连接）在进程内被多线程共享。
+
+**守护进程**：
+- `FolderMonitor.OnBatchTimer` 每个 tick（默认 60 秒）扫描稳定任务
+- 每个稳定任务作为 work item 入队到 `ThreadPool`
+- 通过 `SemaphoreSlim(MaxConcurrentUploads)` 限并发（默认 10）
+- work item 调用共享的 `MinioUploader.UploadFileAsync` / `DeleteObjectAsync` / `DeleteObjectsByPrefixAsync`
+- `MinioClient` 连接池在多次上传间复用，无需每次新建
+
+**FullSync**：
+- 启动时构建一个 `MinioUploader` 实例
+- 遍历本地目录，把所有匹配文件作为 work item 入队 `ThreadPool`
+- 同样通过 `SemaphoreSlim` 限并发（默认 10，可被 `--concurrency` 覆盖）
+- 等所有 work item 完成
+
+**调优 `MaxConcurrentUploads`**：
+
+| 值 | 行为 |
+|---|---|
+| `10`（默认） | 适合大多数情况，CPU/网络均衡 |
+| `0` | 不限并发，所有任务同时跑（受网络带宽/MinIO 服务端限制） |
+| `3`~`5` | 网络较慢或 MinIO 服务端资源有限时降低并发 |
+
+**SyncWorker** 保持独立进程模式，但**仅供外部脚本手工调用**，不参与守护进程或 FullSync 的内部流程。
 
 ---
 
@@ -355,16 +433,23 @@ SyncWorker.exe ^
 
 按日期切分，每个组件生成独立文件：
 
-- `sync-YYYY-MM-DD.log` — 守护进程
-- `worker-YYYY-MM-DD.log` — Worker 子进程
-- `fullsync-YYYY-MM-DD.log` — FullSync 工具
+- `sync-YYYY-MM-DD-<pid>.log` — 守护进程（包含 FSW 事件、进程内上传/删除的所有日志）
+- `fullsync-YYYY-MM-DD-<pid>.log` — FullSync 工具
+- `worker-YYYY-MM-DD-<pid>.log` — SyncWorker（**仅当外部手工调用 SyncWorker.exe 时才会生成**；守护进程和 FullSync 不再调用 SyncWorker，所以正常运行时不会有此文件）
+- `error-YYYY-MM-DD-{configId}-<pid>.txt` — **上传失败记录**（FullSync 和 MinioSync 守护进程共享）。每行一个文件完整路径，可配合 `FullSync.exe --list` 重试
+
+`<pid>` 是进程 ID（`Environment.ProcessId`），同一组件多次启动会生成多个文件，**不会互相覆盖**。例：`fullsync-2026-07-13-8272.log`、`fullsync-2026-07-13-4108.log`。
+
+错误文件名中的 `{configId}` 是对应的配置标识（如 `project-a`），多配置运行时可以清晰区分不同配置的上传失败记录。例：`error-2026-07-13-project-a-8272.txt`、`error-2026-07-13-project-b-8272.txt`。
 
 每条日志格式：`<时间> [<级别>] [任务ID] <消息>`
 
-例：
+例（守护进程删除子目录）：
 ```
-[2026-07-12 10:30:10.121] [信息] [2163bd8c] SyncWorker: action=delete-prefix, file=例子/
-[2026-07-12 10:30:10.228] [错误] [2163bd8c] MinIO 列出对象失败: HTTP 403 Forbidden ...
+[2026-07-12 10:30:10.121] [信息] [2163bd8c] delete-prefix 排队: 例子/
+[2026-07-12 10:30:10.250] [信息] [2163bd8c] 列出前缀 '例子/' 下的对象...
+[2026-07-12 10:30:10.418] [信息] [2163bd8c] 找到 5 个对象，开始批量删除...
+[2026-07-12 10:30:10.612] [信息] [2163bd8c] 批量删除完成: 成功=5, 失败=0
 ```
 
 ---
@@ -400,8 +485,10 @@ dotnet --version
 
 检查：
 - `config.json` 中 `Enable: true`
-- 日志中是否出现 `SyncWorker: action=delete-prefix`
-- MinIO 中该前缀下确实有对象（`delete-prefix` 通过 SDK 列出并**批量**删除该前缀下的对象）
+- 守护进程日志（`logs/sync-*.log`）里应出现 `delete-prefix 排队: 子目录/`，紧接着是列出和批量删除日志
+- MinIO 中该前缀下确实有对象（`DeleteObjectsByPrefixAsync` 通过 SDK 的 `ListObjectsEnumAsync` 列出后用 `RemoveObjectsAsync` 批量删除；批量失败时 SDK 会回退到逐个删除）
+
+如果日志里完全没出现 `delete-prefix`，说明 FSW 没检测到目录删除事件——这种情况多见于网络盘/共享盘，或 `IncludeSubdirectories` 被关掉。
 
 ### 4. 403 SignatureDoesNotMatch
 
@@ -420,6 +507,16 @@ dotnet --version
 ### 6. 中文文件名/路径
 
 完全支持中文路径。对象 Key 在 MinIO / S3 中使用 UTF-8 编码，路径分隔符统一转换为 `/`。
+
+### 7. 三个 Exe 的职责差异
+
+| Exe | 何时调用 | 模式 | 适用场景 |
+|---|---|---|---|
+| `MinioSync.exe` | 长期运行（服务/守护进程） | 进程内多线程 | 实时监控本地文件夹变化 |
+| `FullSync.exe` | 一次性手动执行 | 进程内多线程 | 首次部署、补传历史文件、灾难恢复 |
+| `SyncWorker.exe` | 外部脚本/工具按需调用 | 单文件独立进程 | 运维手动触发某个特定文件的上传/删除 |
+
+**不要**让 MinioSync/FullSync 调用 SyncWorker——守护进程和全量同步都已经自己处理了。
 
 ---
 
