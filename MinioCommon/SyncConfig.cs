@@ -62,6 +62,13 @@ namespace MinioCommon
         public string[] ExcludeSuffixes { get; set; }
 
         /// <summary>
+        /// Maximum number of concurrent upload/delete tasks in this process.
+        /// Used by MinioSync (daemon) and FullSync to throttle in-process parallelism
+        /// via SemaphoreSlim. Default: 10. Set to 0 to disable the limit (unbounded).
+        /// </summary>
+        public int MaxConcurrentUploads { get; set; } = 10;
+
+        /// <summary>
         /// Validates the config has all required fields.
         /// Returns null if valid, or an error message if invalid.
         /// </summary>

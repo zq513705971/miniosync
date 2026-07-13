@@ -21,5 +21,11 @@
     包引用: 此项目不再使用 Newtonsoft.Json. 配置加载改为 System.Text.Json + Source Generator
     (见 ConfigFile.cs 的 JsonSerializable 注解).
     NuGet 客户端自动还原 %USERPROFILE%\.nuget\packages\, 不再有 packages\ 目录.
+
+    Minio 7.0.0 在这里引用 — MinioUploader.cs 已迁移到 MinioCommon, 供 MinioSync / SyncWorker /
+    FullSync 三个可执行项目共享使用.
   -->
+  <ItemGroup>
+    <PackageReference Include="Minio" Version="7.0.0" />
+  </ItemGroup>
 </Project>

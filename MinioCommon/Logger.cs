@@ -28,7 +28,7 @@ namespace MinioCommon
 
         private static string GetLogFilePath()
         {
-            return Path.Combine(_logDir, $"{_logName}-{DateTime.Now:yyyy-MM-dd}.log");
+            return Path.Combine(_logDir, $"{_logName}-{DateTime.Now:yyyy-MM-dd}-{Environment.ProcessId}.log");
         }
 
         public static void Info(string message)
