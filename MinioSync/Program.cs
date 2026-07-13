@@ -21,7 +21,6 @@ namespace MinioSync
             var exeDir = AppDomain.CurrentDomain.BaseDirectory;
             var configPath = Path.Combine(exeDir, "config.json");
             var logsDir = Path.Combine(exeDir, "logs");
-            var workerExePath = Path.Combine(exeDir, "SyncWorker.exe");
 
             // Parse optional CLI args
             for (int i = 0; i < args.Length; i++)
@@ -30,24 +29,16 @@ namespace MinioSync
                     configPath = args[++i];
                 else if (args[i] == "--logs-dir" && i + 1 < args.Length)
                     logsDir = args[++i];
-                else if (args[i] == "--worker-path" && i + 1 < args.Length)
-                    workerExePath = args[++i];
             }
 
             Logger.Initialize(logsDir, "sync");
-
-            if (!File.Exists(workerExePath))
-            {
-                Logger.Error($"未找到 SyncWorker.exe: {workerExePath}");
-                WaitForExit();
-                return;
-            }
+            ErrorLog.Initialize(logsDir);
 
             Logger.Info("============================================");
             Logger.Info("MinioSync 守护进程已启动");
             Logger.Info($"配置文件: {configPath}");
             Logger.Info($"日志目录: {logsDir}");
-            Logger.Info($"Worker 路径: {workerExePath}");
+            Logger.Info("处理模式: 进程内多线程（不再 spawn Worker.exe）");
             Logger.Info("============================================");
 
             // Load configs
@@ -72,7 +63,7 @@ namespace MinioSync
 
                 try
                 {
-                    var monitor = new FolderMonitor(config, workerExePath);
+                    var monitor = new FolderMonitor(config);
                     _monitors.Add(monitor);
                 }
                 catch (Exception ex)
@@ -108,20 +99,6 @@ namespace MinioSync
             }
             _monitors.Clear();
             Logger.Info("MinioSync 守护进程已停止。");
-        }
-
-        private static void WaitForExit()
-        {
-            try
-            {
-                Logger.Info("按任意键退出...");
-                Console.ReadKey();
-            }
-            catch (InvalidOperationException)
-            {
-                Logger.Info("无控制台输入，3 秒后退出...");
-                Thread.Sleep(3000);
-            }
         }
     }
 }

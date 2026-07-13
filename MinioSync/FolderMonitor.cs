@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
+using System.Threading.Tasks;
 using MinioCommon;
 
 namespace MinioSync
@@ -10,14 +11,20 @@ namespace MinioSync
     /// <summary>
     /// Monitors a local folder for file changes.
     /// When files stabilize (no new events for FileStabilitySeconds),
-    /// spawns SyncWorker.exe for each file (unlimited concurrency).
+    /// dispatches the actions IN-PROCESS via ThreadPool + SemaphoreSlim,
+    /// calling MinioCommon.MinioUploader directly. No subprocess spawning.
     /// </summary>
     internal class FolderMonitor : IDisposable
     {
         private readonly SyncConfig _config;
-        private readonly string _workerExePath;
         private readonly FileSystemWatcher _watcher;
         private readonly Timer _batchTimer;
+
+        /// <summary>Reused across all in-process uploads/deletes (MinioClient is thread-safe).</summary>
+        private readonly MinioUploader _uploader;
+
+        /// <summary>Limits concurrent upload/delete tasks to MaxConcurrentUploads.</summary>
+        private readonly SemaphoreSlim _semaphore;
 
         private class PendingChange
         {
@@ -28,17 +35,28 @@ namespace MinioSync
         private readonly ConcurrentDictionary<string, PendingChange> _pendingChanges
             = new ConcurrentDictionary<string, PendingChange>(StringComparer.OrdinalIgnoreCase);
 
-        private int _processing;
+        private int _collecting;
         private bool _disposed;
 
         public string ConfigId => _config.Id ?? "";
         public string LocalFolderPath => _config.LocalFolderPath;
         public string BucketName => _config.BucketName;
 
-        public FolderMonitor(SyncConfig config, string workerExePath)
+        public FolderMonitor(SyncConfig config)
         {
             _config = config;
-            _workerExePath = workerExePath;
+
+            // Build one shared MinioUploader for all in-process calls.
+            _uploader = new MinioUploader(
+                endpoint: config.MinIOEndpoint,
+                bucket: config.BucketName,
+                accessKey: config.AccessKey,
+                secretKey: config.SecretKey,
+                pathPrefix: config.PathPrefix ?? "");
+
+            // Concurrency limit: 0 means unbounded.
+            var max = config.MaxConcurrentUploads > 0 ? config.MaxConcurrentUploads : int.MaxValue;
+            _semaphore = new SemaphoreSlim(max, max);
 
             // FileSystemWatcher
             _watcher = new FileSystemWatcher
@@ -69,7 +87,8 @@ namespace MinioSync
                 ? string.Join(", ", config.ExcludeSuffixes)
                 : "(无)";
             var prefixInfo = string.IsNullOrEmpty(config.PathPrefix) ? "" : $", 路径前缀: {config.PathPrefix}";
-            Logger.Info($"开始监控 [{config.Id}]: {config.LocalFolderPath} (存储桶: {config.BucketName}, 间隔: {config.SyncIntervalSeconds}秒, 稳定等待: {config.FileStabilitySeconds}秒, 扩展名: {extFilter}, 排除后缀: {exclFilter}{prefixInfo})");
+            var maxInfo = config.MaxConcurrentUploads > 0 ? config.MaxConcurrentUploads.ToString() : "不限";
+            Logger.Info($"开始监控 [{config.Id}]: {config.LocalFolderPath} (存储桶: {config.BucketName}, 间隔: {config.SyncIntervalSeconds}秒, 稳定等待: {config.FileStabilitySeconds}秒, 扩展名: {extFilter}, 排除后缀: {exclFilter}, 并发: {maxInfo}{prefixInfo})");
         }
 
         private void OnFileChanged(object sender, FileSystemEventArgs e)
@@ -100,9 +119,6 @@ namespace MinioSync
             // NOT individual events for each file inside it.
             if (string.IsNullOrEmpty(Path.GetExtension(relativePath)))
             {
-                // Directory deletion: FileSystemWatcher only fires ONE Deleted event
-                // for the directory itself, NOT individual events for each file inside it.
-                // Spawn SyncWorker to list and delete all objects under this prefix in MinIO.
                 _pendingChanges.AddOrUpdate(relativePath,
                     k => new PendingChange { Action = "delete-prefix", LastEventTime = DateTime.UtcNow },
                     (k, existing) =>
@@ -160,46 +176,52 @@ namespace MinioSync
         }
 
         /// <summary>
-        /// Collect stabilized files and spawn SyncWorker for each (unlimited concurrency).
+        /// Collects stabilized entries from _pendingChanges and enqueues them to
+        /// ThreadPool for in-process execution (gated by SemaphoreSlim).
         /// </summary>
         private void OnBatchTimer(object state)
         {
             if (_disposed) return;
-            if (Interlocked.CompareExchange(ref _processing, 1, 0) != 0) return;
+            if (Interlocked.CompareExchange(ref _collecting, 1, 0) != 0) return;
 
             try
             {
                 var now = DateTime.UtcNow;
                 var threshold = Math.Max(1, _config.FileStabilitySeconds);
 
-                var stableKeys = new List<string>();
+                int count = 0;
                 foreach (var kvp in _pendingChanges)
                 {
-                    if ((now - kvp.Value.LastEventTime).TotalSeconds >= threshold)
-                        stableKeys.Add(kvp.Key);
+                    if ((now - kvp.Value.LastEventTime).TotalSeconds < threshold)
+                        continue;
+
+                    if (!_pendingChanges.TryRemove(kvp.Key, out var change))
+                        continue; // raced with another consumer
+
+                    string action = change.Action;
+                    string key = kvp.Key;
+
+                    if (action == "delete-prefix")
+                    {
+                        // Normalize to "subdir/" form (trailing slash)
+                        var dirPrefix = key.Replace('\\', '/').TrimEnd('/') + "/";
+                        EnqueueWork(action, "", dirPrefix);
+                    }
+                    else if (action == "delete")
+                    {
+                        EnqueueWork(action, "", key);
+                    }
+                    else // upload
+                    {
+                        var fullPath = Path.Combine(_config.LocalFolderPath, key);
+                        EnqueueWork(action, fullPath, key);
+                    }
+                    count++;
                 }
 
-                if (stableKeys.Count == 0) return;
-
-                Logger.Info($"批次: {stableKeys.Count} 个文件已稳定");
-
-                foreach (var key in stableKeys)
+                if (count > 0)
                 {
-                    PendingChange change;
-                    if (_pendingChanges.TryRemove(key, out change))
-                    {
-                        if (change.Action == "delete-prefix")
-                        {
-                            // Directory deletion: pass the prefix (trailing with /) as --relative
-                            var dirPrefix = key.Replace('\\', '/').TrimEnd('/') + "/";
-                            LaunchWorker("", dirPrefix, "delete-prefix");
-                        }
-                        else
-                        {
-                            var fullPath = Path.Combine(_config.LocalFolderPath, key);
-                            LaunchWorker(fullPath, key, change.Action);
-                        }
-                    }
+                    Logger.Info($"批次: {count} 个任务已稳定，加入 ThreadPool 队列");
                 }
             }
             catch (Exception ex)
@@ -208,29 +230,61 @@ namespace MinioSync
             }
             finally
             {
-                Interlocked.Exchange(ref _processing, 0);
+                Interlocked.Exchange(ref _collecting, 0);
             }
         }
 
-        /// <summary>Launches SyncWorker on a background thread, fire-and-forget.</summary>
-        private void LaunchWorker(string fullPath, string relativePath, string action)
+        /// <summary>
+        /// Queues one MinIO operation to ThreadPool. Concurrency is throttled by
+        /// _semaphore. The MinioUploader instance is shared (thread-safe).
+        /// </summary>
+        private void EnqueueWork(string action, string fullPath, string relativeKey)
         {
             var taskId = Guid.NewGuid().ToString("N").Substring(0, 8);
-            Logger.Info($"[{taskId}] 启动 SyncWorker: {action} {relativePath}");
+            var tag = $"[{taskId}] ";
+            var objectKey = relativeKey.Replace('\\', '/');
 
-            ThreadPool.QueueUserWorkItem(state =>
+            Logger.Info($"{tag}{action} 排队: {objectKey}");
+
+            ThreadPool.QueueUserWorkItem(async _ =>
             {
+                await _semaphore.WaitAsync().ConfigureAwait(false);
                 try
                 {
-                    var exitCode = SyncHelper.SpawnWorkerAndWait(
-                        _workerExePath, _config, fullPath, relativePath, action, taskId);
-
-                    if (exitCode != 0)
-                        Logger.Warn($"[{taskId}] SyncWorker 退出码: {exitCode}");
+                    bool ok;
+                    if (action == "delete-prefix")
+                    {
+                        ok = await _uploader.DeleteObjectsByPrefixAsync(objectKey, CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    else if (action == "delete")
+                    {
+                        ok = await _uploader.DeleteObjectAsync(objectKey, CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    else // upload
+                    {
+                        ok = await _uploader.UploadFileAsync(fullPath, objectKey, CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    if (!ok)
+                    {
+                        Logger.Warn($"{tag}{action} 失败: {objectKey}");
+                        // Only record upload failures: delete/delete-prefix failures
+                        // refer to local files that no longer exist and can't be retried.
+                        if (action == "upload")
+                            ErrorLog.Record(_config.Id, fullPath);
+                    }
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"[{taskId}] 启动 SyncWorker 失败: {relativePath}", ex);
+                    Logger.Error($"{tag}{action} 异常: {objectKey}", ex);
+                    if (action == "upload")
+                        ErrorLog.Record(_config.Id, fullPath);
+                }
+                finally
+                {
+                    _semaphore.Release();
                 }
             });
         }
@@ -252,6 +306,7 @@ namespace MinioSync
             _disposed = true;
             _watcher?.Dispose();
             _batchTimer?.Dispose();
+            _semaphore.Dispose();
             Logger.Info($"停止监控: {_config.LocalFolderPath}");
         }
     }
