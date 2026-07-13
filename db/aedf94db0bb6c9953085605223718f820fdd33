@@ -1,0 +1,32 @@
+SyncWorker/SyncWorker.csproj
+  s_5ce66a743058ac::t_a0b2fa7a2b26a7 1
+  s_f287e1f9952849::t_512f8ac66403ad 39-41,76-78,87
+FullSync/FullSync.csproj
+  s_5ce66a743058ac::t_52ad018ec52115 43-45
+MinioCommon/MinioCommon.csproj
+  s_5ce66a743058ac::t_f51e9f16bba6cc 39-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "dbaedf94db0bb6c9953085605223718f820fdd33",
+  "prompts": {},
+  "sessions": {
+    "s_5ce66a743058ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ses_0a58e355bffe7S7JgSeTCX2UKO",
+        "model": "unknown"
+      },
+      "human_author": "zhanqun <zhanqun@eccom.com.cn>"
+    },
+    "s_f287e1f9952849": {
+      "agent_id": {
+        "tool": "opencode",
+        "id": "ses_0a58e355bffe7S7JgSeTCX2UKO",
+        "model": "unknown"
+      },
+      "human_author": "zhanqun <zhanqun@eccom.com.cn>"
+    }
+  }
+}
