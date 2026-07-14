@@ -1,0 +1,44 @@
+README.md
+  s_5ce66a743058ac::t_497bce2336e58b 28-29,31-33
+  s_5ce66a743058ac::t_df97eee9595ee8 88,106
+  s_5ce66a743058ac::t_4ddc78a283ec1d 148-166,172,178-179,185,190-191,193-198,202-226,233,560-620
+MinioCommon/SyncConfig.cs
+  s_5ce66a743058ac::t_981a6d1783f88b 1,24-32,81-86,97,100,103,106,120-144
+config.json
+  s_5ce66a743058ac::t_e75ab473ff4122 3-21
+  s_5ce66a743058ac::t_66b76beb04c722 27,33-34
+MinioCommon/ConfigManager.cs
+  s_5ce66a743058ac::t_3e01286a2f8f9e 20-26,37,64-66,75-97,114-117
+  s_5ce66a743058ac::t_bc84bcfbcf1000 118
+MinioCommon/ConfigFile.cs
+  s_5ce66a743058ac::t_cfc1834a6eda66 24-35,59-61
+MinioCommon/EmailNotifier.cs
+  s_5ce66a743058ac::t_6d81294caa8e37 1-99
+MinioCommon/SyncHelper.cs
+  s_5ce66a743058ac::t_d874df538dc4e1 9-19
+  s_5ce66a743058ac::t_d4a7d96ca6099e 53,57-58,60,62-63,76,78-79,82-84,88-95
+FullSync/Program.cs
+  s_5ce66a743058ac::t_c2cc0c1d88d024 67,201-218
+MinioCommon/MinioCommon.csproj
+  s_5ce66a743058ac::t_ad2d792af3b35a 30
+MinioSync/FolderMonitor.cs
+  s_5ce66a743058ac::t_39f78a7f8561d3 29-31,48,51,256,277,285,294-305
+MinioSync/Program.cs
+  s_5ce66a743058ac::t_2b387b851152c6 46,66
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "28ae2b3a449d9d4ecc83433daa0ef52d0e2ab21f",
+  "prompts": {},
+  "sessions": {
+    "s_5ce66a743058ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ses_0a58e355bffe7S7JgSeTCX2UKO",
+        "model": "unknown"
+      },
+      "human_author": "zhanqun <zhanqun@eccom.com.cn>"
+    }
+  }
+}
