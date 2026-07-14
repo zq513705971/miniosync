@@ -7,6 +7,17 @@ using System.Text;
 namespace MinioCommon
 {
     /// <summary>
+    /// Result of running a SyncWorker process.
+    /// </summary>
+    public class WorkerResult
+    {
+        /// <summary>Process exit code. 0 = success, non-zero = failure, -1 = failed to start.</summary>
+        public int ExitCode { get; set; }
+        /// <summary>Standard error output captured from the worker process.</summary>
+        public string ErrorOutput { get; set; }
+    }
+
+    /// <summary>
     /// Shared helpers used by MinioSync, SyncWorker, and FullSync tools.
     /// </summary>
     public static class SyncHelper
@@ -39,14 +50,17 @@ namespace MinioCommon
         /// </summary>
         public static int SpawnWorkerAndWait(string workerPath, SyncConfig config, string fullPath, string relativePath, string action, string taskId)
         {
-            return SpawnWorkerAndWait(workerPath, BuildWorkerArgs(config, fullPath, relativePath, action, taskId));
+            return SpawnWorkerAndWait(workerPath, BuildWorkerArgs(config, fullPath, relativePath, action, taskId)).ExitCode;
         }
 
         /// <summary>
-        /// Spawns SyncWorker.exe with raw argument string and waits for it to complete.
+        /// Spawns SyncWorker.exe and waits for it to complete.
+        /// Returns a WorkerResult with exit code and captured error output.
         /// </summary>
-        public static int SpawnWorkerAndWait(string workerPath, string arguments)
+        public static WorkerResult SpawnWorkerAndWait(string workerPath, string arguments)
         {
+            var result = new WorkerResult { ExitCode = -1 };
+
             var psi = new ProcessStartInfo
             {
                 FileName = workerPath,
@@ -59,14 +73,24 @@ namespace MinioCommon
 
             using (var process = Process.Start(psi))
             {
-                if (process == null) return -1;
+                if (process == null) return result;
 
-                // Read output to avoid deadlocks from buffered output
+                // Read both streams to avoid deadlocks
+                var stderr = process.StandardError.ReadToEnd();
                 process.StandardOutput.ReadToEnd();
-                process.StandardError.ReadToEnd();
                 process.WaitForExit();
-                return process.ExitCode;
+                result.ExitCode = process.ExitCode;
+                result.ErrorOutput = stderr?.Trim();
+                return result;
             }
+        }
+
+        /// <summary>
+        /// Spawns SyncWorker.exe with full context and waits, returning structured result.
+        /// </summary>
+        public static WorkerResult SpawnWorkerWithResult(string workerPath, SyncConfig config, string fullPath, string relativePath, string action, string taskId)
+        {
+            return SpawnWorkerAndWait(workerPath, BuildWorkerArgs(config, fullPath, relativePath, action, taskId));
         }
 
         /// <summary>

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 
 namespace MinioCommon
@@ -19,6 +20,15 @@ namespace MinioCommon
 
         /// <summary>Local folder to monitor.</summary>
         public string LocalFolderPath { get; set; }
+
+        /// <summary>
+        /// Reference to a named MinIO profile defined in root's MinIOProfiles.
+        /// When set, inline MinIO fields (MinIOEndpoint/BucketName/AccessKey/SecretKey)
+        /// can be omitted and will be resolved from the profile.
+        /// </summary>
+        public string MinIOProfile { get; set; }
+
+        // ---- Inline MinIO fields (used directly or overridden by profile) ----
 
         /// <summary>MinIO server endpoint (e.g. http://localhost:9000).</summary>
         public string MinIOEndpoint { get; set; }
@@ -69,6 +79,12 @@ namespace MinioCommon
         public int MaxConcurrentUploads { get; set; } = 10;
 
         /// <summary>
+        /// Email addresses to notify when MinIO operations fail for this config.
+        /// Requires root-level Email settings to be configured.
+        /// </summary>
+        public string[] NotifyEmails { get; set; }
+
+        /// <summary>
         /// Validates the config has all required fields.
         /// Returns null if valid, or an error message if invalid.
         /// </summary>
@@ -78,16 +94,16 @@ namespace MinioCommon
                 return "LocalFolderPath is required";
 
             if (string.IsNullOrWhiteSpace(MinIOEndpoint))
-                return "MinIOEndpoint is required";
+                return "MinIOEndpoint is required (either inline or via MinIOProfile)";
 
             if (string.IsNullOrWhiteSpace(BucketName))
-                return "BucketName is required";
+                return "BucketName is required (either inline or via MinIOProfile)";
 
             if (string.IsNullOrWhiteSpace(AccessKey))
-                return "AccessKey is required";
+                return "AccessKey is required (either inline or via MinIOProfile)";
 
             if (string.IsNullOrWhiteSpace(SecretKey))
-                return "SecretKey is required";
+                return "SecretKey is required (either inline or via MinIOProfile)";
 
             if (string.IsNullOrWhiteSpace(Id))
                 return "Id is required";
@@ -100,5 +116,30 @@ namespace MinioCommon
 
             return null;
         }
+    }
+
+    /// <summary>
+    /// Named MinIO connection profile shared across multiple sync configs.
+    /// </summary>
+    public class MinIOProfile
+    {
+        public string Endpoint { get; set; }
+        public string BucketName { get; set; }
+        public string AccessKey { get; set; }
+        public string SecretKey { get; set; }
+        public string Region { get; set; } = "us-east-1";
+    }
+
+    /// <summary>
+    /// SMTP email settings for sending failure notifications.
+    /// </summary>
+    public class EmailSettings
+    {
+        public string SmtpServer { get; set; }
+        public int SmtpPort { get; set; } = 587;
+        public bool UseSsl { get; set; } = true;
+        public string SenderAddress { get; set; }
+        public string SenderPassword { get; set; }
+        public string SenderName { get; set; } = "MinioSync";
     }
 }

@@ -25,11 +25,12 @@
 ```
 MinioSync/
 ├── MinioCommon/               # 公共类库（配置模型、MinIO 客户端、日志、辅助方法）
-│   ├── SyncConfig.cs          # 单个同步任务配置模型
-│   ├── ConfigFile.cs          # 配置文件根模型（Version + Configs）
+│   ├── SyncConfig.cs          # 单个同步任务配置模型（含 MinIOProfile 引用、NotifyEmails）
+│   ├── ConfigFile.cs          # 配置文件根模型（Version + MinIOProfiles + Email + Configs）
 │   │                          #   + JsonSerializable 部分类（元数据在编译期生成）
-│   ├── ConfigManager.cs       # 配置加载/校验（System.Text.Json + source generator）
-│   ├── SyncHelper.cs          # 路径处理、扩展名过滤、SpawnWorkerAndWait（供外部工具用）
+│   ├── ConfigManager.cs       # 配置加载/校验（解析 MinIOProfile 引用，System.Text.Json + source generator）
+│   ├── EmailNotifier.cs       # SMTP 邮件通知（MailKit），MinIO 操作失败时触发告警
+│   ├── SyncHelper.cs          # 路径处理、扩展名过滤、子进程启动（SpawnWorkerAndWait）
 │   ├── MinioUploader.cs       # 上传/删除/批量删除（Minio SDK 7.0.0），三个 Exe 共享
 │   ├── Logger.cs              # 按日期切分的日志器
 │   └── ErrorLog.cs            # 上传失败路径记录（按 configId+日期+PID 分文件）
@@ -84,6 +85,7 @@ MinioSync/
 
 **NuGet 依赖**（在 csproj 中用 `PackageReference` 管理，存于全局 `%USERPROFILE%\.nuget\packages\`）：
 - Minio 7.0.0（引用在 MinioCommon，三个 Exe 通过 MinioCommon 共享使用）
+- MailKit 4.8.0（邮件通知功能，仅在配置 `Email` 字段后生效）
 
 ---
 
@@ -101,7 +103,7 @@ MinioSync/
 3. `dotnet publish` 三个 Exe 项目（`-r win-x64`，自包含，单文件，压缩）
 4. 清空 `deploy/` 目录，把所有 EXE 与 `config.json` 写入
 
-产物：`deploy\` 下三个单文件 EXE（每个约 30–35 MB，**压缩后**），包含 .NET 8 runtime + Minio SDK + System.Text.Json + 全部依赖。
+产物：`deploy\` 下三个单文件 EXE（每个约 35–40 MB，**压缩后**），包含 .NET 8 runtime + Minio SDK + System.Text.Json + 全部依赖。
 
 ### 手动发布（等效命令）
 
@@ -143,45 +145,92 @@ deploy/
 ```json
 {
   "Version": 1,
+
+  "MinIOProfiles": {
+    "default": {
+      "Endpoint": "http://192.168.52.120:9000",
+      "BucketName": "dir1",
+      "AccessKey": "admin",
+      "SecretKey": "admin123456"
+    }
+  },
+
+  "Email": {
+    "SmtpServer": "smtp.example.com",
+    "SmtpPort": 587,
+    "UseSsl": true,
+    "SenderAddress": "miniosync@example.com",
+    "SenderPassword": "your-password",
+    "SenderName": "MinioSync"
+  },
+
   "Configs": [
     {
       "Id": "project-a",
       "Enable": true,
       "LocalFolderPath": "E:\\Test\\p1",
-      "MinIOEndpoint": "http://192.168.52.120:9000",
-      "BucketName": "dir1",
-      "AccessKey": "admin",
-      "SecretKey": "admin123456",
+      "MinIOProfile": "default",
       "SyncIntervalSeconds": 60,
       "FileStabilitySeconds": 3,
       "FileExtensions": [".txt", ".csv", ".json", ".log"],
       "ExcludeSuffixes": [".tmp", ".bak", ".swp"],
       "PathPrefix": "myproject/",
-      "MaxConcurrentUploads": 10
+      "MaxConcurrentUploads": 10,
+      "NotifyEmails": ["admin@example.com"]
     }
   ]
 }
 ```
 
-**字段说明**：
+**根级字段说明**：
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `Version` | 是 | 当前固定为 `1` |
+| `MinIOProfiles` | 否 | 命名 MinIO 连接配置字典，供各 Config 通过 `MinIOProfile` 引用 |
+| `Email` | 否 | SMTP 邮件发送配置，配置后可在 MinIO 操作失败时发送通知 |
 | `Configs` | 是 | 配置数组，可包含多个同步任务 |
-| `Id` | 是 | 配置唯一标识，FullSync 通过 `--config-id` 指定 |
-| `Enable` | 否 | 是否启用实时监控（`false` 时 FullSync 仍可使用此配置） |
-| `LocalFolderPath` | 是 | 要监控的本地文件夹，需事先存在 |
-| `MinIOEndpoint` | 是 | MinIO 端点 URL（含协议和端口） |
+
+**MinIOProfiles 字段说明**：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `Endpoint` | 是 | MinIO 端点 URL（含协议和端口） |
 | `BucketName` | 是 | 目标存储桶 |
 | `AccessKey` | 是 | MinIO 访问密钥 |
 | `SecretKey` | 是 | MinIO 秘密密钥 |
+| `Region` | 否 | 区域，默认 `us-east-1` |
+
+**Email 字段说明**：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `SmtpServer` | 是 | SMTP 服务器地址 |
+| `SmtpPort` | 是 | SMTP 端口，默认 `587` |
+| `UseSsl` | 否 | 是否使用 SSL 连接，默认 `true` |
+| `SenderAddress` | 是 | 发件人邮箱地址 |
+| `SenderPassword` | 是 | SMTP 密码或授权码 |
+| `SenderName` | 否 | 发件人显示名称，默认 `MinioSync` |
+
+**Config 字段说明**：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `Id` | 是 | 配置唯一标识，FullSync 通过 `--config-id` 指定 |
+| `Enable` | 否 | 是否启用实时监控（`false` 时 FullSync 仍可使用此配置） |
+| `LocalFolderPath` | 是 | 要监控的本地文件夹，需事先存在 |
+| `MinIOProfile` | 否 | 引用 `MinIOProfiles` 中的命名配置。设置后 MinIO 连接字段（`MinIOEndpoint`、`BucketName` 等）可省略 |
+| `MinIOEndpoint` | 否 | MinIO 端点 URL（仅在未引用 Profile 或需覆盖时设置） |
+| `BucketName` | 否 | 目标存储桶（仅在未引用 Profile 或需覆盖时设置） |
+| `AccessKey` | 否 | MinIO 访问密钥（仅在未引用 Profile 或需覆盖时设置） |
+| `SecretKey` | 否 | MinIO 秘密密钥（仅在未引用 Profile 或需覆盖时设置） |
 | `SyncIntervalSeconds` | 否 | 批处理定时器周期，默认 `60` |
 | `FileStabilitySeconds` | 否 | 文件稳定等待时长（无写事件后多久触发上传），默认 `3` |
 | `FileExtensions` | 否 | 要同步的扩展名白名单；为空/null 表示全部 |
 | `ExcludeSuffixes` | 否 | 要排除的文件后缀列表（如 `[".tmp", ".bak"]`），叠加在内置排除（`.tmp`、`.bak`、`.~lock`、`~$*`）之上 |
 | `PathPrefix` | 否 | 上传到 MinIO 时给对象 Key 增加的前缀，如 `"myproject/"`。支持多级路径，如 `"project-a/data/images/"`；未设置则对象 Key 等于相对路径 |
 | `MaxConcurrentUploads` | 否 | 进程内并发上传数（`SemaphoreSlim` 上限）。用于 MinioSync 和 FullSync 的多线程节流，默认 `10`，传 `0` 表示不限 |
+| `NotifyEmails` | 否 | 异常通知邮箱列表。当 MinIO 上传/删除失败时，会向这些邮箱发送告警邮件。需配置根级 `Email` |
 
 ---
 
@@ -508,7 +557,67 @@ dotnet --version
 
 完全支持中文路径。对象 Key 在 MinIO / S3 中使用 UTF-8 编码，路径分隔符统一转换为 `/`。
 
-### 7. 三个 Exe 的职责差异
+### 7. 如何配置多个同步任务复用同一个 MinIO 连接？
+
+在根级定义 `MinIOProfiles`，各 Config 通过 `MinIOProfile` 字段引用：
+
+```json
+{
+  "MinIOProfiles": {
+    "default": {
+      "Endpoint": "http://192.168.52.120:9000",
+      "BucketName": "shared-bucket",
+      "AccessKey": "admin",
+      "SecretKey": "admin123456"
+    }
+  },
+  "Configs": [
+    {
+      "Id": "project-a",
+      "MinIOProfile": "default",
+      "LocalFolderPath": "E:\\Data\\a",
+      ...
+    },
+    {
+      "Id": "project-b",
+      "MinIOProfile": "default",
+      "LocalFolderPath": "E:\\Data\\b",
+      ...
+    }
+  ]
+}
+```
+
+如果某个 Config 需要覆盖 Profile 中的个别字段（如不同 Bucket），可以在 Config 内直接写对应字段，**inline 字段优先级高于 Profile 填充**：
+
+```json
+{
+  "Id": "project-c",
+  "MinIOProfile": "default",
+  "BucketName": "other-bucket",
+  "LocalFolderPath": "E:\\Data\\c",
+  ...
+}
+```
+
+### 8. 邮件通知如何配置？
+
+邮件通知分两步：
+
+1. 在根级配置 `Email` 字段（SMTP 服务器信息）
+2. 在对应 Config 中设置 `NotifyEmails` 数组（收件人列表）
+
+满足 **三个条件** 时发送告警邮件：
+- 根级 `Email` 已配置
+- 该 Config 的 `NotifyEmails` 非空
+- MinIO 上传或删除操作失败
+
+**MinioSync（守护进程）**：发送**单次操作失败**通知（立即）。
+**FullSync（全量同步）**：在同步**结束后**发送**失败汇总**通知（不逐条发送）。
+
+密码明文存放在 `config.json` 中（内网场景可接受），建议使用 SMTP 授权码而非邮箱密码。未配置 `Email` 或 `NotifyEmails` 时，程序完全正常工作，不发送也不报错。
+
+### 9. 三个 Exe 的职责差异
 
 | Exe | 何时调用 | 模式 | 适用场景 |
 |---|---|---|---|

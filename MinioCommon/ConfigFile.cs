@@ -21,6 +21,18 @@ namespace MinioCommon
         /// <summary>Config file schema version. Currently 1.</summary>
         public int Version { get; set; }
 
+        /// <summary>
+        /// Named MinIO connection profiles.
+        /// Each config in Configs can reference a profile by name via MinIOProfile field.
+        /// </summary>
+        public Dictionary<string, MinIOProfile> MinIOProfiles { get; set; }
+
+        /// <summary>
+        /// SMTP email settings for sending failure alerts.
+        /// When null, no email notifications are sent.
+        /// </summary>
+        public EmailSettings Email { get; set; }
+
         /// <summary>List of sync task configurations.</summary>
         public List<SyncConfig> Configs { get; set; }
     }
@@ -44,6 +56,9 @@ namespace MinioCommon
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
     [JsonSerializable(typeof(ConfigFile))]
     [JsonSerializable(typeof(SyncConfig))]
+    [JsonSerializable(typeof(MinIOProfile))]
+    [JsonSerializable(typeof(EmailSettings))]
+    [JsonSerializable(typeof(Dictionary<string, MinIOProfile>))]
     internal partial class AppJsonContext : JsonSerializerContext
     {
     }

@@ -1,20 +1,37 @@
 {
   "Version": 1,
+
+  "MinIOProfiles": {
+    "default": {
+      "Endpoint": "http://192.168.52.120:9000",
+      "BucketName": "dir1",
+      "AccessKey": "admin",
+      "SecretKey": "admin123456"
+    }
+  },
+
+  "Email": {
+    "SmtpServer": "smtp.example.com",
+    "SmtpPort": 587,
+    "UseSsl": true,
+    "SenderAddress": "miniosync@example.com",
+    "SenderPassword": "your-password",
+    "SenderName": "MinioSync"
+  },
+
   "Configs": [
     {
       "Id": "project-a",
       "Enable": true,
       "LocalFolderPath": "E:\\Test\\p1",
-      "MinIOEndpoint": "http://192.168.52.120:9000",
-      "BucketName": "dir1",
-      "AccessKey": "admin",
-      "SecretKey": "admin123456",
+      "MinIOProfile": "default",
       "SyncIntervalSeconds": 60,
       "FileStabilitySeconds": 3,
       "FileExtensions": [".txt", ".csv", ".json", ".log"],
       "ExcludeSuffixes": [".tmp", ".bak", ".swp"],
       "PathPrefix": "myproject/",
-      "MaxConcurrentUploads": 10
+      "MaxConcurrentUploads": 10,
+      "NotifyEmails": ["admin@example.com"]
     }
   ]
 }

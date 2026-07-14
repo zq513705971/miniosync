@@ -17,6 +17,13 @@ namespace MinioCommon
     public class ConfigManager
     {
         private readonly string _configFilePath;
+        private EmailSettings _emailSettings;
+
+        /// <summary>
+        /// SMTP email settings loaded from the config file (root.Email).
+        /// Null when not configured.
+        /// </summary>
+        public EmailSettings EmailSettings => _emailSettings;
 
         public ConfigManager(string configFilePath)
         {
@@ -27,6 +34,7 @@ namespace MinioCommon
         /// Loads all valid configs from the single configuration file.
         /// The file must contain a JSON object with Version + Configs (see ConfigFile).
         /// Invalid configs are logged and skipped.
+        /// MinIOProfile references are resolved before returning.
         /// </summary>
         public List<SyncConfig> LoadAllConfigs()
         {
@@ -44,9 +52,6 @@ namespace MinioCommon
             {
                 var json = File.ReadAllText(_configFilePath);
 
-                // Use the source-generated context (no reflection, static methods).
-                // The generated JsonSerializerOptions honour PropertyNameCaseInsensitive=false
-                // by default, matching the PascalCase schema in config.json.
                 var options = AppJsonContext.Default.Options;
                 var configFile = JsonSerializer.Deserialize<ConfigFile>(json, options);
 
@@ -56,6 +61,9 @@ namespace MinioCommon
                     return configs;
                 }
 
+                // Store email settings so callers can access them
+                _emailSettings = configFile.Email;
+
                 Logger.Info($"配置文件版本: {configFile.Version}");
 
                 var configDir = Path.GetDirectoryName(Path.GetFullPath(_configFilePath));
@@ -64,7 +72,29 @@ namespace MinioCommon
                 {
                     if (config == null) continue;
 
-                    // Resolve relative LocalFolderPath to absolute (relative to config file location)
+                    // ---- Resolve MinIOProfile reference ----
+                    if (!string.IsNullOrEmpty(config.MinIOProfile))
+                    {
+                        if (configFile.MinIOProfiles != null &&
+                            configFile.MinIOProfiles.TryGetValue(config.MinIOProfile, out var profile))
+                        {
+                            if (string.IsNullOrEmpty(config.MinIOEndpoint))
+                                config.MinIOEndpoint = profile.Endpoint;
+                            if (string.IsNullOrEmpty(config.BucketName))
+                                config.BucketName = profile.BucketName;
+                            if (string.IsNullOrEmpty(config.AccessKey))
+                                config.AccessKey = profile.AccessKey;
+                            if (string.IsNullOrEmpty(config.SecretKey))
+                                config.SecretKey = profile.SecretKey;
+                            Logger.Info($"配置 '{config.Id}': 已从 MinIOProfile '{config.MinIOProfile}' 解析连接信息");
+                        }
+                        else
+                        {
+                            Logger.Warn($"配置 '{config.Id}': 引用的 MinIOProfile '{config.MinIOProfile}' 不存在，使用内联字段");
+                        }
+                    }
+
+                    // Resolve relative LocalFolderPath to absolute
                     if (!string.IsNullOrEmpty(config.LocalFolderPath) && !Path.IsPathRooted(config.LocalFolderPath))
                     {
                         config.LocalFolderPath = Path.GetFullPath(Path.Combine(
@@ -80,6 +110,11 @@ namespace MinioCommon
 
                     configs.Add(config);
                     Logger.Info($"已加载配置: {config.Id} -> {config.LocalFolderPath} -> {config.MinIOEndpoint}/{config.BucketName}");
+                }
+
+                if (_emailSettings != null)
+                {
+                    Logger.Info($"邮件通知已配置 (SMTP: {_emailSettings.SmtpServer}:{_emailSettings.SmtpPort})");
                 }
             }
             catch (Exception ex)
