@@ -223,10 +223,7 @@ namespace MinioSync
                     count++;
                 }
 
-                if (count > 0)
-                {
-                    Logger.Info($"批次: {count} 个任务已稳定，加入 ThreadPool 队列");
-                }
+                // count > 0 means batch was processed — no verbose log needed
             }
             catch (Exception ex)
             {
@@ -247,8 +244,6 @@ namespace MinioSync
             var taskId = Guid.NewGuid().ToString("N").Substring(0, 8);
             var tag = $"[{taskId}] ";
             var objectKey = relativeKey.Replace('\\', '/');
-
-            Logger.Info($"{tag}{action} 排队: {objectKey}");
 
             ThreadPool.QueueUserWorkItem(async _ =>
             {

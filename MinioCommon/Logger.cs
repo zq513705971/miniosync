@@ -53,7 +53,7 @@ namespace MinioCommon
 
         private static void WriteLog(string level, string message)
         {
-            var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+            var timestamp = DateTime.Now.ToString("HH:mm:ss");
             var logLine = $"[{timestamp}] [{level}] {message}";
 
             Console.WriteLine(logLine);

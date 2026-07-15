@@ -77,7 +77,6 @@ namespace MinioCommon
                 }
 
                 var contentType = GetContentType(localFilePath);
-                var fileInfo = new FileInfo(localFilePath);
                 var fullKey = ApplyPrefix(objectKey);
 
                 var args = new PutObjectArgs()
@@ -88,12 +87,12 @@ namespace MinioCommon
 
                 _ = await _client.PutObjectAsync(args, ct).ConfigureAwait(false);
 
-                Logger.Info($"{_tag}上传成功: {fullKey} ({fileInfo.Length} 字节, {contentType})");
+                Logger.Info($"{_tag}OK: {fullKey}");
                 return true;
             }
             catch (MinioException ex)
             {
-                Logger.Error($"{_tag}MinIO 上传失败 '{objectKey}'", ex);
+                Logger.Error($"{_tag}上传失败 '{objectKey}'", ex);
                 return false;
             }
             catch (Exception ex)
@@ -116,7 +115,6 @@ namespace MinioCommon
                     .WithBucket(_bucket)
                     .WithObject(fullKey);
                 await _client.RemoveObjectAsync(args, ct).ConfigureAwait(false);
-                Logger.Info($"{_tag}删除成功: {fullKey}");
                 return true;
             }
             catch (ObjectNotFoundException)
@@ -149,7 +147,6 @@ namespace MinioCommon
             try
             {
                 var fullPrefix = ApplyPrefix(prefix);
-                Logger.Info($"{_tag}列出前缀 '{fullPrefix}' 下的对象...");
 
                 var listArgs = new ListObjectsArgs()
                     .WithBucket(_bucket)
@@ -178,11 +175,8 @@ namespace MinioCommon
 
                 if (keys.Count == 0)
                 {
-                    Logger.Info($"{_tag}前缀 '{fullPrefix}' 下没有对象，无需删除");
                     return true;
                 }
-
-                Logger.Info($"{_tag}找到 {keys.Count} 个对象，开始批量删除...");
 
                 var removeArgs = new RemoveObjectsArgs()
                     .WithBucket(_bucket)
@@ -193,16 +187,15 @@ namespace MinioCommon
                     var errors = await _client.RemoveObjectsAsync(removeArgs, ct).ConfigureAwait(false);
                     if (errors == null || errors.Count == 0)
                     {
-                        Logger.Info($"{_tag}批量删除完成: 成功={keys.Count}, 失败=0");
                         return true;
                     }
 
-                    Logger.Warn($"{_tag}批量删除: SDK 返回 {errors.Count} 个失败, 逐个重试");
+                    Logger.Warn($"{_tag}批量部分失败, 逐个重试");
                     return await DeleteOneByOneAsync(keys, ct);
                 }
                 catch (Exception batchEx)
                 {
-                    Logger.Warn($"{_tag}批量删除请求异常, 回退到逐个删除: {batchEx.Message}");
+                    Logger.Warn($"{_tag}批量失败, 逐个重试: {batchEx.Message}");
                     return await DeleteOneByOneAsync(keys, ct);
                 }
             }
@@ -236,7 +229,10 @@ namespace MinioCommon
                     failCount++;
                 }
             }
-            Logger.Info($"{_tag}逐个删除完成: 成功={successCount}, 失败={failCount}");
+            if (failCount > 0)
+                Logger.Warn($"{_tag}删除完成: {successCount}成功, {failCount}失败");
+            else
+                Logger.Info($"{_tag}删除完成: {successCount}个");
             return failCount == 0;
         }
 
