@@ -1,0 +1,28 @@
+MinioCommon/Logger.cs
+  s_5ce66a743058ac::t_75a2b1dd36d6fd 56
+MinioCommon/MinioUploader.cs
+  s_5ce66a743058ac::t_675fdf80d53932 90,95,193,198,232-235
+MinioSync/FolderMonitor.cs
+  s_5ce66a743058ac::t_ae54adc165bd74 226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "020af05f57c1739330004533380a4e75bb36b482",
+  "prompts": {},
+  "humans": {
+    "h_0dcc2fad110419": {
+      "author": "zhanqun <zhanqun@eccom.com.cn>"
+    }
+  },
+  "sessions": {
+    "s_5ce66a743058ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ses_0a58e355bffe7S7JgSeTCX2UKO",
+        "model": "unknown"
+      },
+      "human_author": "zhanqun <zhanqun@eccom.com.cn>"
+    }
+  }
+}
