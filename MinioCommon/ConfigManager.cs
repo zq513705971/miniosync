@@ -109,7 +109,10 @@ namespace MinioCommon
                     }
 
                     configs.Add(config);
-                    Logger.Info($"已加载配置: {config.Id} -> {config.LocalFolderPath} -> {config.MinIOEndpoint}/{config.BucketName}");
+                    if (string.IsNullOrWhiteSpace(config.LocalFolderPath))
+                        Logger.Info($"已加载配置: {config.Id} -> (远程配置) -> {config.MinIOEndpoint}/{config.BucketName}");
+                    else
+                        Logger.Info($"已加载配置: {config.Id} -> {config.LocalFolderPath} -> {config.MinIOEndpoint}/{config.BucketName}");
                 }
 
                 if (_emailSettings != null)

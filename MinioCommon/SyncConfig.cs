@@ -90,9 +90,7 @@ namespace MinioCommon
         /// </summary>
         public string Validate()
         {
-            if (string.IsNullOrWhiteSpace(LocalFolderPath))
-                return "LocalFolderPath is required";
-
+            // LocalFolderPath is optional — m2ms source/target configs have no local folder.
             if (string.IsNullOrWhiteSpace(MinIOEndpoint))
                 return "MinIOEndpoint is required (either inline or via MinIOProfile)";
 
@@ -108,7 +106,7 @@ namespace MinioCommon
             if (string.IsNullOrWhiteSpace(Id))
                 return "Id is required";
 
-            if (!Directory.Exists(LocalFolderPath))
+            if (!string.IsNullOrWhiteSpace(LocalFolderPath) && !Directory.Exists(LocalFolderPath))
                 return $"LocalFolderPath does not exist: {LocalFolderPath}";
 
             if (SyncIntervalSeconds <= 0)
