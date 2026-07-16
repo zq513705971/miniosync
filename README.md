@@ -25,49 +25,56 @@
 ```
 MinioSync/
 ├── MinioCommon/               # 公共类库（配置模型、MinIO 客户端、日志、辅助方法）
-│   ├── SyncConfig.cs          # 单个同步任务配置模型（含 MinIOProfile 引用、NotifyEmails）
-│   ├── ConfigFile.cs          # 配置文件根模型（Version + MinIOProfiles + Email + Configs）
+│   ├── SyncConfig.cs          # 单个同步任务配置模型（含 MinIOProfile 引用）
+│   ├── ConfigFile.cs          # 配置文件根模型（Version + MinIOProfiles + Configs）
 │   │                          #   + JsonSerializable 部分类（元数据在编译期生成）
 │   ├── ConfigManager.cs       # 配置加载/校验（解析 MinIOProfile 引用，System.Text.Json + source generator）
-│   ├── EmailNotifier.cs       # SMTP 邮件通知（MailKit），MinIO 操作失败时触发告警
-│   ├── SyncHelper.cs          # 路径处理、扩展名过滤、子进程启动（SpawnWorkerAndWait）
-│   ├── MinioUploader.cs       # 上传/删除/批量删除（Minio SDK 7.0.0），三个 Exe 共享
+│   ├── SyncHelper.cs          # 路径处理、扩展名过滤
+│   ├── MinioUploader.cs       # 上传/删除/批量删除（Minio SDK 7.0.0），所有 Exe 共享
+│   ├── MinioReader.cs         # 下载/列表（Minio SDK 7.0.0），供 Minio2MinioSync 使用
 │   ├── Logger.cs              # 按日期切分的日志器
 │   └── ErrorLog.cs            # 上传失败路径记录（按 configId+日期+PID 分文件）
 │
-├── MinioSync/                 # 守护进程（实时监控）
+├── MinioSync/                 # 守护进程（实时监控）→ 发布为 mms.exe
 │   ├── Program.cs             # 配置加载 + 启动 FileSystemWatcher
 │   └── FolderMonitor.cs       # FSW + 批量定时器 + 进程内 ThreadPool 多线程上传
 │
-├── SyncWorker/                # 单文件 CLI 工具（供外部脚本手工调用，不被 MinioSync/FullSync 调用）
+├── SyncWorker/                # 单文件 CLI 工具（供外部脚本手工调用）→ 发布为 mss.exe
 │   └── Program.cs             # 命令行参数解析（async Main），调用 MinioCommon.MinioUploader
 │
-├── FullSync/                  # 一次性全量同步工具
+├── FullSync/                  # 一次性全量同步工具 → 发布为 mfs.exe
 │   └── Program.cs             # 目录扫描/文件列表(--list) + 进程内 ThreadPool 多线程上传 + 失败记录
+│
+├── Minio2MinioSync/           # MinIO → MinIO 一次性全量同步工具 → 发布为 m2ms.exe
+│   └── Program.cs             # --source + --target 两个 config-id，跨 MinIO 复制对象
 │
 ├── Directory.Build.props      # 解决方案级 MSBuild 配置（所有 csproj 自动继承）
 │
-├── deploy/                    # publish 输出目录（部署用）
+├── deploy/                    # publish 输出目录（部署用），含 mms/mfs/mss/m2ms.exe
 ├── config.json                # 配置文件
-└── publish.ps1                # 发布脚本（自包含 + 单文件）
+└── publish.ps1                # 发布脚本（自包含 + 单文件 + 重命名为短名）
 ```
 
 ---
 
 ## 核心组件
 
-| 组件 | 场景 | 进程模型 |
-|---|---|---|
-| **MinioSync.exe** | 实时监控本地文件夹，自动同步到 MinIO | **进程内多线程**：FSW 检测变化 → ThreadPool + SemaphoreSlim → 进程内调用 `MinioUploader` |
-| **FullSync.exe** | 一次性全量初始化（首次部署、补传历史文件），也支持 `--list` 文件列表模式恢复特定文件集 | **进程内多线程**：遍历目录或读取文件列表 → ThreadPool + SemaphoreSlim → 进程内调用 `MinioUploader`，上传失败自动记录到 ErrorLog |
-| **SyncWorker.exe** | 外部脚本/工具手工调用，一次处理一个文件 | 单进程单文件 CLI，调用 `MinioUploader` |
+| 组件 | 项目 | 发布 EXE | 场景 | 进程模型 |
+|---|---|---|---|---|
+| **MinioSync** | MinioSync/ | **mms.exe** (Minio Monitor Sync) | 实时监控本地文件夹，自动同步到 MinIO | 进程内多线程 |
+| **FullSync** | FullSync/ | **mfs.exe** (Minio Full Sync) | 一次性全量初始化（首次部署、补传历史文件、`--list` 文件列表模式恢复特定文件集） | 进程内多线程 |
+| **SyncWorker** | SyncWorker/ | **mss.exe** (Minio Single Sync) | 外部脚本/工具手工调用，一次处理一个文件 | 单进程单文件 CLI |
+| **Minio2MinioSync** | Minio2MinioSync/ | **m2ms.exe** (Minio to Minio Sync) | MinIO → MinIO 一次性全量同步（迁移/灾备/双写） | 进程内多线程 |
 
-**关键设计**：`MinioUploader`（含 MinioClient 连接）在 MinioCommon 类库，三个 Exe 都引用。守护进程和全量同步**不再 spawn 子进程**，避免每次操作都启停 .NET 进程的开销；MinioClient 复用、连接池保温，多线程间通过 `SemaphoreSlim` 限并发。SyncWorker 保留独立进程模式，仅用于**外部一次性调用**（如运维手动触发某个特定文件的上传/删除）。
+> **命名规则**：源码项目名沿用旧名（MinioSync/FullSync/SyncWorker），发布后的 EXE 用短名便于在服务器上大量部署时识别。`publish.ps1` 自动重命名。
 
-三者职责互不重叠：
-- **MinioSync** = 监控（持续运行）
-- **FullSync** = 初始化 + 文件列表恢复（一次性）
-- **SyncWorker** = 外部调用接口（手工/脚本触发）
+**关键设计**：`MinioUploader`（含 MinioClient 连接）和 `MinioReader`（源 MinIO 下载）在 MinioCommon 类库，所有 Exe 都引用。守护进程、全量同步、MinIO→MinIO 同步**全部在进程内**通过 ThreadPool + SemaphoreSlim 完成，避免每次操作都启停 .NET 进程的开销；MinioClient 复用、连接池保温，多线程间通过 `SemaphoreSlim` 限并发。SyncWorker 保留独立进程模式，仅用于**外部一次性调用**（如运维手动触发某个特定文件的上传/删除）。
+
+四者职责互不重叠：
+- **MinioSync (mms)** = 监控（持续运行）
+- **FullSync (mfs)** = 本地文件夹 → MinIO 一次性初始化 + 文件列表恢复
+- **Minio2MinioSync (m2ms)** = MinIO → MinIO 一次性全量同步
+- **SyncWorker (mss)** = 外部调用接口（手工/脚本触发）
 
 ---
 
@@ -84,8 +91,7 @@ MinioSync/
 - 约 250 MB 磁盘空间
 
 **NuGet 依赖**（在 csproj 中用 `PackageReference` 管理，存于全局 `%USERPROFILE%\.nuget\packages\`）：
-- Minio 7.0.0（引用在 MinioCommon，三个 Exe 通过 MinioCommon 共享使用）
-- MailKit 4.8.0（邮件通知功能，仅在配置 `Email` 字段后生效）
+- Minio 7.0.0（引用在 MinioCommon，所有 Exe 通过 MinioCommon 共享使用）
 
 ---
 
@@ -100,10 +106,11 @@ MinioSync/
 发布脚本会：
 1. `dotnet restore MinioSync.sln`（按 `csproj` 自动还原 NuGet 包到全局缓存）
 2. `dotnet build MinioSync.sln -c Release`（Release 配置编译）
-3. `dotnet publish` 三个 Exe 项目（`-r win-x64`，自包含，单文件，压缩）
-4. 清空 `deploy/` 目录，把所有 EXE 与 `config.json` 写入
+3. `dotnet publish` 四个 Exe 项目（`-r win-x64`，自包含，单文件，压缩）
+4. 把每个发布产物的 EXE 重命名为短名（MinioSync → mms、FullSync → mfs、SyncWorker → mss、Minio2MinioSync → m2ms）
+5. 清空 `deploy/` 目录，把所有 EXE 与 `config.json` 写入
 
-产物：`deploy\` 下三个单文件 EXE（每个约 35–40 MB，**压缩后**），包含 .NET 8 runtime + Minio SDK + System.Text.Json + 全部依赖。
+产物：`deploy\` 下四个单文件 EXE（每个约 35–40 MB，**压缩后**），包含 .NET 8 runtime + Minio SDK + System.Text.Json + 全部依赖。
 
 ### 手动发布（等效命令）
 
@@ -113,7 +120,12 @@ dotnet build   MinioSync.sln -c Release
 dotnet publish MinioSync\MinioSync.csproj -c Release -r win-x64 -o deploy\
 dotnet publish SyncWorker\SyncWorker.csproj -c Release -r win-x64 -o deploy\
 dotnet publish FullSync\FullSync.csproj     -c Release -r win-x64 -o deploy\
+dotnet publish Minio2MinioSync\Minio2MinioSync.csproj -c Release -r win-x64 -o deploy\
 copy /Y config.json deploy\
+ren deploy\MinioSync.exe        mms.exe
+ren deploy\SyncWorker.exe       mss.exe
+ren deploy\FullSync.exe         mfs.exe
+ren deploy\Minio2MinioSync.exe  m2ms.exe
 ```
 
 > 注意：不要传 `--no-build`，否则 GenerateBundle 任务找不到 `singlefilehost.exe` 中间文件。
@@ -124,11 +136,12 @@ copy /Y config.json deploy\
 
 ```
 deploy/
-├── MinioSync.exe            # 守护进程，自包含（含全部依赖）
-├── SyncWorker.exe           # Worker，自包含（含 Minio SDK 7.0.0）
-├── FullSync.exe             # 全量同步工具，自包含（含全部依赖）
-├── config.json              # 配置
-└── *.runtimeconfig.json     # 运行时配置（一般不需修改）
+├── mms.exe                   # MinioSync 守护进程 → MinIO Monitor Sync
+├── mfs.exe                   # FullSync 一次性全量同步 → Minio Full Sync
+├── m2ms.exe                  # Minio2MinioSync 跨 MinIO 同步 → Minio to Minio Sync
+├── mss.exe                   # SyncWorker 单文件 CLI → Minio Single Sync
+├── config.json               # 配置
+└── *.runtimeconfig.json      # 运行时配置（一般不需修改）
 ```
 
 > `MinioCommon.dll`、`Minio.dll`、`System.Reactive.dll` 等依赖已通过 `PublishSingleFile` 打包进每个 EXE 内部，deploy/ 目录不会看到额外的 DLL 文件。
@@ -138,7 +151,7 @@ deploy/
 
 ## 配置文件
 
-**位置**：与 `MinioSync.exe` 同目录下的 `config.json`，或通过 `--config` 参数指定。
+**位置**：与各 EXE 同目录下的 `config.json`，或通过 `--config` 参数指定。
 
 **格式**：
 
@@ -155,15 +168,6 @@ deploy/
     }
   },
 
-  "Email": {
-    "SmtpServer": "smtp.example.com",
-    "SmtpPort": 587,
-    "UseSsl": true,
-    "SenderAddress": "miniosync@example.com",
-    "SenderPassword": "your-password",
-    "SenderName": "MinioSync"
-  },
-
   "Configs": [
     {
       "Id": "project-a",
@@ -175,8 +179,23 @@ deploy/
       "FileExtensions": [".txt", ".csv", ".json", ".log"],
       "ExcludeSuffixes": [".tmp", ".bak", ".swp"],
       "PathPrefix": "myproject/",
-      "MaxConcurrentUploads": 10,
-      "NotifyEmails": ["admin@example.com"]
+      "MaxConcurrentUploads": 10
+    },
+    {
+      "Id": "remote-source",
+      "MinIOEndpoint": "http://minio-source.example.com:9000",
+      "BucketName": "source-bucket",
+      "AccessKey": "source-key",
+      "SecretKey": "source-secret",
+      "PathPrefix": "incoming/"
+    },
+    {
+      "Id": "remote-target",
+      "MinIOEndpoint": "http://minio-target.example.com:9000",
+      "BucketName": "target-bucket",
+      "AccessKey": "target-key",
+      "SecretKey": "target-secret",
+      "PathPrefix": "archive/"
     }
   ]
 }
@@ -188,8 +207,7 @@ deploy/
 |---|---|---|
 | `Version` | 是 | 当前固定为 `1` |
 | `MinIOProfiles` | 否 | 命名 MinIO 连接配置字典，供各 Config 通过 `MinIOProfile` 引用 |
-| `Email` | 否 | SMTP 邮件发送配置，配置后可在 MinIO 操作失败时发送通知 |
-| `Configs` | 是 | 配置数组，可包含多个同步任务 |
+| `Configs` | 是 | 配置数组，可包含多个同步任务（也用作 m2ms 的源/目标配置） |
 
 **MinIOProfiles 字段说明**：
 
@@ -200,17 +218,6 @@ deploy/
 | `AccessKey` | 是 | MinIO 访问密钥 |
 | `SecretKey` | 是 | MinIO 秘密密钥 |
 | `Region` | 否 | 区域，默认 `us-east-1` |
-
-**Email 字段说明**：
-
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| `SmtpServer` | 是 | SMTP 服务器地址 |
-| `SmtpPort` | 是 | SMTP 端口，默认 `587` |
-| `UseSsl` | 否 | 是否使用 SSL 连接，默认 `true` |
-| `SenderAddress` | 是 | 发件人邮箱地址 |
-| `SenderPassword` | 是 | SMTP 密码或授权码 |
-| `SenderName` | 否 | 发件人显示名称，默认 `MinioSync` |
 
 **Config 字段说明**：
 
@@ -228,24 +235,23 @@ deploy/
 | `FileStabilitySeconds` | 否 | 文件稳定等待时长（无写事件后多久触发上传），默认 `3` |
 | `FileExtensions` | 否 | 要同步的扩展名白名单；为空/null 表示全部 |
 | `ExcludeSuffixes` | 否 | 要排除的文件后缀列表（如 `[".tmp", ".bak"]`），叠加在内置排除（`.tmp`、`.bak`、`.~lock`、`~$*`）之上 |
-| `PathPrefix` | 否 | 上传到 MinIO 时给对象 Key 增加的前缀，如 `"myproject/"`。支持多级路径，如 `"project-a/data/images/"`；未设置则对象 Key 等于相对路径 |
-| `MaxConcurrentUploads` | 否 | 进程内并发上传数（`SemaphoreSlim` 上限）。用于 MinioSync 和 FullSync 的多线程节流，默认 `10`，传 `0` 表示不限 |
-| `NotifyEmails` | 否 | 异常通知邮箱列表。当 MinIO 上传/删除失败时，会向这些邮箱发送告警邮件。需配置根级 `Email` |
+| `PathPrefix` | 否 | 上传到 MinIO 时给对象 Key 增加的前缀，如 `"myproject/"`。支持多级路径，如 `"project-a/data/images/"`；未设置则对象 Key 等于相对路径。用于 m2ms 时是源/目标各自的前缀 |
+| `MaxConcurrentUploads` | 否 | 进程内并发上传数（`SemaphoreSlim` 上限）。用于 MinioSync/FullSync/m2ms 的多线程节流，默认 `10`，传 `0` 表示不限 |
 
 ---
 
 ## 使用方法
 
-### 1. 启动守护进程（实时同步）
+### 1. 启动守护进程（实时同步）— `mms.exe`
 
 ```cmd
-MinioSync.exe
+mms.exe
 ```
 
 或指定自定义路径：
 
 ```cmd
-MinioSync.exe --config D:\configs\myconfig.json --logs-dir D:\logs
+mms.exe --config D:\configs\myconfig.json --logs-dir D:\logs
 ```
 
 **参数**：
@@ -257,18 +263,18 @@ MinioSync.exe --config D:\configs\myconfig.json --logs-dir D:\logs
 
 按 `Ctrl+C` 优雅退出。
 
-### 2. 全量同步
+### 2. 全量同步 — `mfs.exe`
 
 **目录扫描模式**（默认）—— 扫描配置 `LocalFolderPath` 下所有匹配文件：
 
 ```cmd
-FullSync.exe --config-id project-a
+mfs.exe --config-id project-a
 ```
 
 **文件列表模式** —— `--list <path>` 指定一个文本文件，每行一个文件的完整路径，仅处理列表中的文件：
 
 ```cmd
-FullSync.exe --config-id project-a --list C:\lists\backup.txt
+mfs.exe --config-id project-a --list C:\lists\backup.txt
 ```
 
 `backup.txt` 示例（空行和 `#` 开头视为注释）：
@@ -294,7 +300,7 @@ E:\Backups\重要合同.docx
 
 #### 上传失败重试
 
-FullSync 运行中上传失败的文件路径会自动记录到错误日志文件（路径**相对于**该配置的 `LocalFolderPath`）：
+mfs 运行中上传失败的文件路径会自动记录到错误日志文件（路径**相对于**该配置的 `LocalFolderPath`）：
 
 ```
 logs/error-YYYY-MM-DD-{configId}-{pid}.txt
@@ -303,17 +309,58 @@ logs/error-YYYY-MM-DD-{configId}-{pid}.txt
 例如：`logs/error-2026-07-13-project-a-8272.txt`。每行一个相对路径，可用作 `--list` 的参数进行重试：
 
 ```cmd
-FullSync.exe --config-id project-a --list logs\error-2026-07-13-project-a-8272.txt
+mfs.exe --config-id project-a --list logs\error-2026-07-13-project-a-8272.txt
 ```
 
 `--list` 会自动将相对路径拼接上配置的 `LocalFolderPath`，也同时支持绝对路径（便于手动编辑后使用）。错误文件名包含 `configId`，多配置运行时可以从文件名直接看出是哪个配置的失败记录。
 
-### 3. SyncWorker（供外部脚本/工具手工调用）
+### 3. MinIO → MinIO 同步 — `m2ms.exe`
 
-**注意**：守护进程 MinioSync 和全量工具 FullSync **不再调用** SyncWorker。SyncWorker 仅供外部脚本、运维手工或第三方工具做**单文件一次性操作**（上传/删除）。
+把一个 MinIO bucket 的对象全量复制到另一个 MinIO bucket。典型场景：
+- 跨区域灾备（源 MinIO → 异地 MinIO）
+- 跨云迁移（本地 MinIO → AWS S3 / 阿里云 OSS，需 endpoint 替换）
+- 双写同步
+
+**用法**：`--source <config-id>` 指定源 MinIO 配置，`--target <config-id>` 指定目标 MinIO 配置，两个 ID 都来自同一份 `config.json`。
 
 ```cmd
-SyncWorker.exe ^
+m2ms.exe --source remote-source --target remote-target
+```
+
+两个配置都引用各自独立的 MinIO 连接（`MinIOEndpoint`/`BucketName`/`AccessKey`/`SecretKey`/`PathPrefix`）。
+
+**工作流**：
+1. 用源配置的 `MinIOReader` 列出源 bucket 中所有匹配 `PathPrefix` 前缀的对象
+2. 每个对象：下载到内存 → 写入临时文件 → 上传到目标 bucket 的 `PathPrefix` 前缀下
+3. 上传失败的对象路径写入错误日志 `logs/error-...-{target-config-id}-{pid}.txt`
+
+**对象 Key 转换**：
+
+| 源对象 Key | 源 PathPrefix | 目标 PathPrefix | 目标对象 Key |
+|---|---|---|---|
+| `incoming/2026/07/a.csv` | `incoming/` | `archive/` | `archive/2026/07/a.csv` |
+| `bronze/blobs/app1.json` | `bronze/` | (无) | `blobs/app1.json` |
+
+即：去掉源前缀、拼上目标前缀。
+
+**参数**：
+
+| 参数 | 必填 | 说明 |
+|---|---|---|
+| `--source <id>` | 是 | 源 MinIO 连接的 `config-id` |
+| `--target <id>` | 是 | 目标 MinIO 连接的 `config-id` |
+| `--config <path>` | 否 | 配置文件路径（默认 `<exeDir>\config.json`） |
+| `--concurrency` / `-c <n>` | 否 | 进程内并发复制数；未传时用目标配置的 `MaxConcurrentUploads`（默认 10），传 `0` 表示不限 |
+| `--logs-dir <path>` | 否 | 日志目录 |
+
+> 注：源/目标两个配置的 MinIO 连接信息都可以独立配置（同一个 `config.json` 内可有任意多个 Config 条目）。`LocalFolderPath`/`SyncIntervalSeconds`/`Enable`/`FileExtensions` 等本地文件相关字段在 m2ms 场景下**被忽略**，只有 MinIO 相关字段会被使用。
+
+### 4. SyncWorker（供外部脚本/工具手工调用）— `mss.exe`
+
+**注意**：守护进程 mms 和全量工具 mfs **不再调用** SyncWorker。SyncWorker 仅供外部脚本、运维手工或第三方工具做**单文件一次性操作**（上传/删除）。
+
+```cmd
+mss.exe ^
   --endpoint "http://192.168.52.120:9000" ^
   --bucket "dir1" ^
   --access-key "admin" ^
@@ -418,7 +465,7 @@ SyncWorker.exe ^
 
 ### 文件监控
 
-`MinioSync.exe` 使用 .NET `FileSystemWatcher` 监控本地文件夹：
+`mms.exe` 使用 .NET `FileSystemWatcher` 监控本地文件夹：
 
 - `IncludeSubdirectories = true` 递归监控
 - `NotifyFilters = FileName | LastWrite | DirectoryName`
@@ -484,8 +531,11 @@ SyncWorker.exe ^
 
 - `sync-YYYY-MM-DD-<pid>.log` — 守护进程（包含 FSW 事件、进程内上传/删除的所有日志）
 - `fullsync-YYYY-MM-DD-<pid>.log` — FullSync 工具
-- `worker-YYYY-MM-DD-<pid>.log` — SyncWorker（**仅当外部手工调用 SyncWorker.exe 时才会生成**；守护进程和 FullSync 不再调用 SyncWorker，所以正常运行时不会有此文件）
-- `error-YYYY-MM-DD-{configId}-<pid>.txt` — **上传失败记录**（FullSync 和 MinioSync 守护进程共享）。每行一个**相对于** `LocalFolderPath` 的路径，可配合 `FullSync.exe --list` 重试
+- `mfs-YYYY-MM-DD-<pid>.log` — FullSync（`mfs.exe`）一次性全量同步
+- `mms-YYYY-MM-DD-<pid>.log` — MinioSync（`mms.exe`）守护进程（包含 FSW 事件、进程内上传/删除的所有日志）
+- `m2ms-YYYY-MM-DD-<pid>.log` — Minio2MinioSync（`m2ms.exe`）跨 MinIO 复制
+- `mss-YYYY-MM-DD-<pid>.log` — SyncWorker（**仅当外部手工调用 mss.exe 时才会生成**；守护进程和 mfs 不再调用 SyncWorker，所以正常运行时不会有此文件）
+- `error-YYYY-MM-DD-{configId}-<pid>.txt` — **上传失败记录**（`mfs` 和 `mms` 守护进程共享）。每行一个**相对于** `LocalFolderPath` 的路径，可配合 `mfs.exe --list` 重试
 
 `<pid>` 是进程 ID（`Environment.ProcessId`），同一组件多次启动会生成多个文件，**不会互相覆盖**。例：`fullsync-2026-07-13-8272.log`、`fullsync-2026-07-13-4108.log`。
 
@@ -600,32 +650,16 @@ dotnet --version
 }
 ```
 
-### 8. 邮件通知如何配置？
+### 8. 四个 Exe 的职责差异
 
-邮件通知分两步：
+| Exe | 项目 | 何时调用 | 模式 | 适用场景 |
+|---|---|---|---|---|
+| `mms.exe` | MinioSync | 长期运行（服务/守护进程） | 进程内多线程 | 实时监控本地文件夹变化 |
+| `mfs.exe` | FullSync | 一次性手动执行 | 进程内多线程 | 首次部署、补传历史文件、灾难恢复 |
+| `m2ms.exe` | Minio2MinioSync | 一次性手动执行 | 进程内多线程 | 跨 MinIO 迁移、双写、灾备 |
+| `mss.exe` | SyncWorker | 外部脚本/工具按需调用 | 单文件独立进程 | 运维手动触发某个特定文件的上传/删除 |
 
-1. 在根级配置 `Email` 字段（SMTP 服务器信息）
-2. 在对应 Config 中设置 `NotifyEmails` 数组（收件人列表）
-
-满足 **三个条件** 时发送告警邮件：
-- 根级 `Email` 已配置
-- 该 Config 的 `NotifyEmails` 非空
-- MinIO 上传或删除操作失败
-
-**MinioSync（守护进程）**：发送**单次操作失败**通知（立即）。
-**FullSync（全量同步）**：在同步**结束后**发送**失败汇总**通知（不逐条发送）。
-
-密码明文存放在 `config.json` 中（内网场景可接受），建议使用 SMTP 授权码而非邮箱密码。未配置 `Email` 或 `NotifyEmails` 时，程序完全正常工作，不发送也不报错。
-
-### 9. 三个 Exe 的职责差异
-
-| Exe | 何时调用 | 模式 | 适用场景 |
-|---|---|---|---|
-| `MinioSync.exe` | 长期运行（服务/守护进程） | 进程内多线程 | 实时监控本地文件夹变化 |
-| `FullSync.exe` | 一次性手动执行 | 进程内多线程 | 首次部署、补传历史文件、灾难恢复 |
-| `SyncWorker.exe` | 外部脚本/工具按需调用 | 单文件独立进程 | 运维手动触发某个特定文件的上传/删除 |
-
-**不要**让 MinioSync/FullSync 调用 SyncWorker——守护进程和全量同步都已经自己处理了。
+**不要**让 mms/mfs 调用 mss——守护进程和全量同步都已经自己处理了。
 
 ---
 

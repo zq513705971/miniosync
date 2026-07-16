@@ -10,15 +10,6 @@
     }
   },
 
-  "Email": {
-    "SmtpServer": "smtp.example.com",
-    "SmtpPort": 587,
-    "UseSsl": true,
-    "SenderAddress": "miniosync@example.com",
-    "SenderPassword": "your-password",
-    "SenderName": "MinioSync"
-  },
-
   "Configs": [
     {
       "Id": "project-a",
@@ -30,8 +21,25 @@
       "FileExtensions": [".txt", ".csv", ".json", ".log"],
       "ExcludeSuffixes": [".tmp", ".bak", ".swp"],
       "PathPrefix": "myproject/",
-      "MaxConcurrentUploads": 10,
-      "NotifyEmails": ["admin@example.com"]
+      "MaxConcurrentUploads": 10
+    },
+
+    {
+      "Id": "remote-source",
+      "MinIOEndpoint": "http://minio-source.example.com:9000",
+      "BucketName": "source-bucket",
+      "AccessKey": "source-key",
+      "SecretKey": "source-secret",
+      "PathPrefix": "incoming/"
+    },
+
+    {
+      "Id": "remote-target",
+      "MinIOEndpoint": "http://minio-target.example.com:9000",
+      "BucketName": "target-bucket",
+      "AccessKey": "target-key",
+      "SecretKey": "target-secret",
+      "PathPrefix": "archive/"
     }
   ]
 }
