@@ -10,6 +10,15 @@
     }
   },
 
+  "Email": {
+    "SmtpServer": "smtp.example.com",
+    "SmtpPort": 587,
+    "UseSsl": true,
+    "SenderAddress": "miniosync@example.com",
+    "SenderPassword": "your-password",
+    "SenderName": "MinioSync"
+  },
+
   "Configs": [
     {
       "Id": "project-a",
@@ -21,7 +30,8 @@
       "FileExtensions": [".txt", ".csv", ".json", ".log"],
       "ExcludeSuffixes": [".tmp", ".bak", ".swp"],
       "PathPrefix": "myproject/",
-      "MaxConcurrentUploads": 10
+      "MaxConcurrentUploads": 10,
+      "NotifyEmails": ["admin@example.com"]
     },
 
     {

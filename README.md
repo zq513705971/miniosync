@@ -25,10 +25,11 @@
 ```
 MinioSync/
 ├── MinioCommon/               # 公共类库（配置模型、MinIO 客户端、日志、辅助方法）
-│   ├── SyncConfig.cs          # 单个同步任务配置模型（含 MinIOProfile 引用）
-│   ├── ConfigFile.cs          # 配置文件根模型（Version + MinIOProfiles + Configs）
+│   ├── SyncConfig.cs          # 单个同步任务配置模型（含 MinIOProfile 引用、NotifyEmails）
+│   ├── ConfigFile.cs          # 配置文件根模型（Version + MinIOProfiles + Email + Configs）
 │   │                          #   + JsonSerializable 部分类（元数据在编译期生成）
 │   ├── ConfigManager.cs       # 配置加载/校验（解析 MinIOProfile 引用，System.Text.Json + source generator）
+│   ├── EmailNotifier.cs       # SMTP 邮件通知（MailKit），MinIO 操作失败时触发告警
 │   ├── SyncHelper.cs          # 路径处理、扩展名过滤
 │   ├── MinioUploader.cs       # 上传/删除/批量删除（Minio SDK 7.0.0），所有 Exe 共享
 │   ├── MinioReader.cs         # 下载/列表（Minio SDK 7.0.0），供 Minio2MinioSync 使用
@@ -92,6 +93,7 @@ MinioSync/
 
 **NuGet 依赖**（在 csproj 中用 `PackageReference` 管理，存于全局 `%USERPROFILE%\.nuget\packages\`）：
 - Minio 7.0.0（引用在 MinioCommon，所有 Exe 通过 MinioCommon 共享使用）
+- MailKit 4.8.0（邮件通知功能，仅在配置 `Email` 字段后生效）
 
 ---
 
@@ -168,6 +170,15 @@ deploy/
     }
   },
 
+  "Email": {
+    "SmtpServer": "smtp.example.com",
+    "SmtpPort": 587,
+    "UseSsl": true,
+    "SenderAddress": "miniosync@example.com",
+    "SenderPassword": "your-password",
+    "SenderName": "MinioSync"
+  },
+
   "Configs": [
     {
       "Id": "project-a",
@@ -179,7 +190,8 @@ deploy/
       "FileExtensions": [".txt", ".csv", ".json", ".log"],
       "ExcludeSuffixes": [".tmp", ".bak", ".swp"],
       "PathPrefix": "myproject/",
-      "MaxConcurrentUploads": 10
+      "MaxConcurrentUploads": 10,
+      "NotifyEmails": ["admin@example.com"]
     },
     {
       "Id": "remote-source",
@@ -207,6 +219,7 @@ deploy/
 |---|---|---|
 | `Version` | 是 | 当前固定为 `1` |
 | `MinIOProfiles` | 否 | 命名 MinIO 连接配置字典，供各 Config 通过 `MinIOProfile` 引用 |
+| `Email` | 否 | SMTP 邮件发送配置，配置后可在 MinIO 操作失败时发送通知 |
 | `Configs` | 是 | 配置数组，可包含多个同步任务（也用作 m2ms 的源/目标配置） |
 
 **MinIOProfiles 字段说明**：
@@ -219,13 +232,24 @@ deploy/
 | `SecretKey` | 是 | MinIO 秘密密钥 |
 | `Region` | 否 | 区域，默认 `us-east-1` |
 
+**Email 字段说明**：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `SmtpServer` | 是 | SMTP 服务器地址 |
+| `SmtpPort` | 是 | SMTP 端口，默认 `587` |
+| `UseSsl` | 否 | 是否使用 SSL 连接，默认 `true` |
+| `SenderAddress` | 是 | 发件人邮箱地址 |
+| `SenderPassword` | 是 | SMTP 密码或授权码 |
+| `SenderName` | 否 | 发件人显示名称，默认 `MinioSync` |
+
 **Config 字段说明**：
 
 | 字段 | 必填 | 说明 |
 |---|---|---|
 | `Id` | 是 | 配置唯一标识，FullSync 通过 `--config-id` 指定 |
 | `Enable` | 否 | 是否启用实时监控（`false` 时 FullSync 仍可使用此配置） |
-| `LocalFolderPath` | 是 | 要监控的本地文件夹，需事先存在 |
+| `LocalFolderPath` | 否 | 本地文件夹路径。mms/mfs 需要此字段用于文件监控/扫描；m2ms 远程配置（纯 MinIO 连接）可留空 |
 | `MinIOProfile` | 否 | 引用 `MinIOProfiles` 中的命名配置。设置后 MinIO 连接字段（`MinIOEndpoint`、`BucketName` 等）可省略 |
 | `MinIOEndpoint` | 否 | MinIO 端点 URL（仅在未引用 Profile 或需覆盖时设置） |
 | `BucketName` | 否 | 目标存储桶（仅在未引用 Profile 或需覆盖时设置） |
@@ -237,6 +261,7 @@ deploy/
 | `ExcludeSuffixes` | 否 | 要排除的文件后缀列表（如 `[".tmp", ".bak"]`），叠加在内置排除（`.tmp`、`.bak`、`.~lock`、`~$*`）之上 |
 | `PathPrefix` | 否 | 上传到 MinIO 时给对象 Key 增加的前缀，如 `"myproject/"`。支持多级路径，如 `"project-a/data/images/"`；未设置则对象 Key 等于相对路径。用于 m2ms 时是源/目标各自的前缀 |
 | `MaxConcurrentUploads` | 否 | 进程内并发上传数（`SemaphoreSlim` 上限）。用于 MinioSync/FullSync/m2ms 的多线程节流，默认 `10`，传 `0` 表示不限 |
+| `NotifyEmails` | 否 | 异常通知邮箱列表。当 MinIO 上传/删除失败时，会向这些邮箱发送告警邮件。需配置根级 `Email` |
 
 ---
 
@@ -262,6 +287,26 @@ mms.exe --config D:\configs\myconfig.json --logs-dir D:\logs
 | `--logs-dir <path>` | `<exeDir>\logs` | 日志目录 |
 
 按 `Ctrl+C` 优雅退出。
+
+**启动行为**：
+- 加载配置后，自动跳过 `Enable: false` 的配置
+- `LocalFolderPath` 为空的配置（纯 MinIO 远程配置，供 m2ms 使用）也会被跳过，不启动监控
+- 启动日志示例：
+```
+[22:27:15] [信息] ============================================
+[22:27:15] [信息] MinioSync 守护进程已启动
+[22:27:15] [信息] ============================================
+[22:27:15] [信息]   已加载配置: project-a -> E:\Test\p1 -> http://192.168.52.120:9000/dir1
+[22:27:15] [信息]   已加载配置: remote-source -> (远程配置) -> http://minio-source.example.com:9000/source-bucket
+[22:27:15] [信息]   [project-a] 监控已启动
+[22:27:15] [信息]     文件夹:   E:\Test\p1
+[22:27:15] [信息]     MinIO:    http://192.168.52.120:9000/dir1, 路径前缀: myproject/
+[22:27:15] [信息]     间隔:     60秒 | 稳定等待: 3秒 | 并发: 10
+[22:27:15] [信息]     文件过滤: .txt, .csv, .json, .log | 排除: .tmp, .bak, .swp
+[22:27:15] [信息]   [remote-source] 远程配置(无本地文件夹)，跳过监控
+[22:27:15] [信息]   [remote-target] 远程配置(无本地文件夹)，跳过监控
+[22:27:15] [信息] 共 1 个监控已启动，按 Ctrl+C 停止。
+```
 
 ### 2. 全量同步 — `mfs.exe`
 
@@ -353,7 +398,7 @@ m2ms.exe --source remote-source --target remote-target
 | `--concurrency` / `-c <n>` | 否 | 进程内并发复制数；未传时用目标配置的 `MaxConcurrentUploads`（默认 10），传 `0` 表示不限 |
 | `--logs-dir <path>` | 否 | 日志目录 |
 
-> 注：源/目标两个配置的 MinIO 连接信息都可以独立配置（同一个 `config.json` 内可有任意多个 Config 条目）。`LocalFolderPath`/`SyncIntervalSeconds`/`Enable`/`FileExtensions` 等本地文件相关字段在 m2ms 场景下**被忽略**，只有 MinIO 相关字段会被使用。
+> 注：源/目标两个配置的 MinIO 连接信息都可以独立配置（同一个 `config.json` 内可有任意多个 Config 条目）。`LocalFolderPath`/`SyncIntervalSeconds`/`Enable`/`FileExtensions` 等本地文件相关字段在 m2ms 场景下**被忽略**，只有 MinIO 相关字段会被使用。因此这些配置可以**完全省略 `LocalFolderPath`**，不会导致校验错误。
 
 ### 4. SyncWorker（供外部脚本/工具手工调用）— `mss.exe`
 
@@ -650,7 +695,24 @@ dotnet --version
 }
 ```
 
-### 8. 四个 Exe 的职责差异
+### 8. 邮件通知如何配置？
+
+邮件通知分两步：
+
+1. 在根级配置 `Email` 字段（SMTP 服务器信息）
+2. 在对应 Config 中设置 `NotifyEmails` 数组（收件人列表）
+
+满足 **三个条件** 时发送告警邮件：
+- 根级 `Email` 已配置
+- 该 Config 的 `NotifyEmails` 非空
+- MinIO 上传或删除操作失败
+
+**MinioSync（守护进程）**：发送**单次操作失败**通知（立即）。
+**FullSync（全量同步）**：在同步**结束后**发送**失败汇总**通知（不逐条发送）。
+
+密码明文存放在 `config.json` 中（内网场景可接受），建议使用 SMTP 授权码而非邮箱密码。未配置 `Email` 或 `NotifyEmails` 时，程序完全正常工作，不发送也不报错。
+
+### 9. 四个 Exe 的职责差异
 
 | Exe | 项目 | 何时调用 | 模式 | 适用场景 |
 |---|---|---|---|---|
