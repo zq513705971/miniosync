@@ -64,7 +64,6 @@ namespace FullSync
             // Load configs and find by ID
             var configManager = new ConfigManager(configPath);
             var configs = configManager.LoadAllConfigs();
-            var emailSettings = configManager.EmailSettings;
             SyncConfig targetConfig = null;
             foreach (var c in configs)
             {
@@ -198,24 +197,6 @@ namespace FullSync
                 {
                     Logger.Info($"失败文件路径已记录到: {ErrorLog.GetErrorFilePath(configId)}");
                     Logger.Info($"重试命令: FullSync.exe --config-id {configId} --list \"{ErrorLog.GetErrorFilePath(configId)}\"");
-
-                    // Send summary email on failures
-                    if (emailSettings != null && targetConfig.NotifyEmails != null && targetConfig.NotifyEmails.Length > 0)
-                    {
-                        var subject = $"MinioSync 全量同步完成 - {configId} - 失败 {failed + exceptions}/{total}";
-                        var body = $"MinioSync 全量同步结果通知\n" +
-                                   $"========================\n" +
-                                   $"时间:     {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n" +
-                                   $"配置 ID:  {configId}\n" +
-                                   $"总计:     {total}\n" +
-                                   $"成功:     {completed}\n" +
-                                   $"失败:     {failed}\n" +
-                                   $"异常:     {exceptions}\n" +
-                                   $"错误日志: {ErrorLog.GetErrorFilePath(configId)}\n" +
-                                   $"========================\n" +
-                                   $"此邮件由 MinioSync 自动发送。";
-                        _ = EmailNotifier.SendAlertAsync(emailSettings, targetConfig.NotifyEmails, subject, body);
-                    }
                 }
 
                 return failed > 0 || exceptions > 0 ? 1 : 0;

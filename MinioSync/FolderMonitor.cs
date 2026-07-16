@@ -26,9 +26,6 @@ namespace MinioSync
         /// <summary>Limits concurrent upload/delete tasks to MaxConcurrentUploads.</summary>
         private readonly SemaphoreSlim _semaphore;
 
-        /// <summary>SMTP email settings for failure alerts. Null = no notification.</summary>
-        private readonly EmailSettings _emailSettings;
-
         private class PendingChange
         {
             public string Action { get; set; }
@@ -45,10 +42,9 @@ namespace MinioSync
         public string LocalFolderPath => _config.LocalFolderPath;
         public string BucketName => _config.BucketName;
 
-        public FolderMonitor(SyncConfig config, EmailSettings emailSettings = null)
+        public FolderMonitor(SyncConfig config)
         {
             _config = config;
-            _emailSettings = emailSettings;
 
             // Build one shared MinioUploader for all in-process calls.
             _uploader = new MinioUploader(
@@ -248,7 +244,6 @@ namespace MinioSync
             ThreadPool.QueueUserWorkItem(async _ =>
             {
                 await _semaphore.WaitAsync().ConfigureAwait(false);
-                string errorMsg = null;
                 try
                 {
                     bool ok;
@@ -269,7 +264,6 @@ namespace MinioSync
                     }
                     if (!ok)
                     {
-                        errorMsg = $"{action} 操作返回失败";
                         Logger.Warn($"{tag}{action} 失败: {objectKey}");
                         if (action == "upload")
                             ErrorLog.Record(_config.Id, relativeKey);
@@ -277,7 +271,6 @@ namespace MinioSync
                 }
                 catch (Exception ex)
                 {
-                    errorMsg = $"{action} 异常: {ex.Message}";
                     Logger.Error($"{tag}{action} 异常: {objectKey}", ex);
                     if (action == "upload")
                         ErrorLog.Record(_config.Id, relativeKey);
@@ -285,18 +278,6 @@ namespace MinioSync
                 finally
                 {
                     _semaphore.Release();
-                }
-
-                // Send notification email on failure if configured
-                if (errorMsg != null && _emailSettings != null &&
-                    _config.NotifyEmails != null && _config.NotifyEmails.Length > 0)
-                {
-                    var subject = $"MinioSync 同步失败 - {_config.Id} - {action}";
-                    var body = EmailNotifier.BuildFailureBody(
-                        _config.Id, action, objectKey, errorMsg);
-                    // Fire-and-forget: don't block the upload thread on email
-                    _ = EmailNotifier.SendAlertAsync(
-                        _emailSettings, _config.NotifyEmails, subject, body);
                 }
             });
         }

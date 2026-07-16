@@ -43,7 +43,6 @@ namespace MinioSync
             // Load configs
             var configManager = new ConfigManager(configPath);
             var configs = configManager.LoadAllConfigs();
-            var emailSettings = configManager.EmailSettings;
 
             if (configs.Count == 0)
             {
@@ -63,7 +62,7 @@ namespace MinioSync
 
                 try
                 {
-                    var monitor = new FolderMonitor(config, emailSettings);
+                    var monitor = new FolderMonitor(config);
                     _monitors.Add(monitor);
                 }
                 catch (Exception ex)
