@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk" ToolsVersion="15.0">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>Minio2MinioSync</AssemblyName>
+    <RootNamespace>Minio2MinioSync</RootNamespace>
+    <!-- 新项目 GUID -->
+    <ProjectGuid>{8C5D2F1A-9E4B-4D7F-A1C3-7B9E8F2D4A1B}</ProjectGuid>
+    <ApplicationIcon>..\app_icon.ico</ApplicationIcon>
+    <UseAppHost>true</UseAppHost>
+    <TargetFrameworkVersion>v2.0</TargetFrameworkVersion>
+    <FileUpgradeFlags>
+    </FileUpgradeFlags>
+    <UpgradeBackupLocation>
+    </UpgradeBackupLocation>
+    <OldToolsVersion>2.0</OldToolsVersion>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\MinioCommon\MinioCommon.csproj" />
+  </ItemGroup>
+  <!--
+    不直接引用 Minio SDK — 通过 MinioCommon.MinioReader (下载/列表)
+    和 MinioCommon.MinioUploader (上传) 完成 MinIO → MinIO 同步.
+  -->
+</Project>
