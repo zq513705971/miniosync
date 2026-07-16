@@ -115,8 +115,19 @@ if (-not [string]::IsNullOrEmpty($Version)) {
 # requires a RID-specific intermediate build because the SDK needs to materialize a
 # `singlefilehost.exe` host stub in obj\Release\net8.0\win-x64\ before bundling.
 # Without that intermediate file, GenerateBundle fails with FileNotFoundException.
-$exes = @("MinioSync", "SyncWorker", "FullSync")
-foreach ($name in $exes) {
+#
+# Project name  -> Output EXE name (short, lowercase)
+#   MinioSync      -> mms.exe   (Minio Monitor Sync)
+#   FullSync       -> mfs.exe   (Minio Full Sync)
+#   SyncWorker     -> mss.exe   (Minio Single Sync)
+#   Minio2MinioSync -> m2ms.exe (Minio to Minio Sync)
+$exeMap = @{
+    "MinioSync"        = "mms"
+    "FullSync"         = "mfs"
+    "SyncWorker"       = "mss"
+    "Minio2MinioSync"  = "m2ms"
+}
+foreach ($name in $exeMap.Keys) {
     $csproj = Join-Path $root "$name\$name.csproj"
     if (-not (Test-Path -LiteralPath $csproj)) { throw "Missing csproj: $csproj" }
     Write-Host "  -> $name (-r $Runtime, --self-contained, --single-file)" -ForegroundColor DarkCyan
@@ -128,6 +139,24 @@ foreach ($name in $exes) {
     if ($LASTEXITCODE -ne 0) { throw "Publish $name failed (exit $LASTEXITCODE)" }
     if (-not [string]::IsNullOrEmpty($Version)) {
         Write-Host "  Version: $Version" -ForegroundColor DarkCyan
+    }
+}
+
+# Rename published EXEs to the short output names.
+# `dotnet publish` produces e.g. MinioSync.exe (the project's AssemblyName).
+# We rename each one to its short counterpart above so deploy/ contains
+# mms.exe, mfs.exe, mss.exe, m2ms.exe instead of the long project names.
+Write-Host ""
+Write-Host "[4.5/5] Renaming published EXEs to short names" -ForegroundColor Yellow
+foreach ($entry in $exeMap.GetEnumerator()) {
+    $src = Join-Path $deployDir ("{0}.exe" -f $entry.Key)
+    $dst = Join-Path $deployDir ("{0}.exe" -f $entry.Value)
+    if (Test-Path -LiteralPath $src) {
+        Move-Item -LiteralPath $src -Destination $dst -Force
+        Write-Host "  $src -> $dst" -ForegroundColor DarkCyan
+    }
+    else {
+        Write-Warning "Expected published EXE not found: $src"
     }
 }
 
