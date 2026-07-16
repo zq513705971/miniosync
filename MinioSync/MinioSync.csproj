@@ -6,6 +6,11 @@
     <!-- 保留原 ProjectGuid: {5164bf3d-035f-4752-8bef-a3868288a6c3} -->
     <ProjectGuid>{5164bf3d-035f-4752-8bef-a3868288a6c3}</ProjectGuid>
     <ApplicationIcon>..\app_icon.ico</ApplicationIcon>
+    <AssemblyTitle>Minio Monitor Sync (mms)</AssemblyTitle>
+    <Description>本地文件夹到 MinIO 实时同步守护进程</Description>
+    <Product>MinioSync (mms)</Product>
+    <Company>smallbyte</Company>
+    <Copyright>Copyright (c) smallbyte 2026</Copyright>
     <UseAppHost>true</UseAppHost>
     <TargetFrameworkVersion>v2.0</TargetFrameworkVersion>
     <FileUpgradeFlags>

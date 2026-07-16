@@ -6,6 +6,11 @@
     <!-- 新项目 GUID -->
     <ProjectGuid>{8C5D2F1A-9E4B-4D7F-A1C3-7B9E8F2D4A1B}</ProjectGuid>
     <ApplicationIcon>..\app_icon.ico</ApplicationIcon>
+    <AssemblyTitle>Minio to Minio Sync (m2ms)</AssemblyTitle>
+    <Description>跨 MinIO 对象复制工具（迁移/灾备/双写）</Description>
+    <Product>Minio2MinioSync (m2ms)</Product>
+    <Company>smallbyte</Company>
+    <Copyright>Copyright (c) smallbyte 2026</Copyright>
     <UseAppHost>true</UseAppHost>
     <TargetFrameworkVersion>v2.0</TargetFrameworkVersion>
     <FileUpgradeFlags>

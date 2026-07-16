@@ -6,6 +6,11 @@
     <!-- 保留原 ProjectGuid: {515c69cc-2136-4407-a475-e918a794f0c1} -->
     <ProjectGuid>{515c69cc-2136-4407-a475-e918a794f0c1}</ProjectGuid>
     <ApplicationIcon>..\app_icon.ico</ApplicationIcon>
+    <AssemblyTitle>Minio Single Sync (mss)</AssemblyTitle>
+    <Description>单文件 CLI 同步工具（供外部脚本手工调用）</Description>
+    <Product>SyncWorker (mss)</Product>
+    <Company>smallbyte</Company>
+    <Copyright>Copyright (c) smallbyte 2026</Copyright>
     <!--
       .NET 8 SDK 默认禁用了 UseAppHost 反转; 开启让 EXE 文件有 EXE header
       (而非 dll), 与 .NET Framework 行为一致.

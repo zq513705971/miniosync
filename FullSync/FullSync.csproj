@@ -6,6 +6,11 @@
     <!-- 保留原 ProjectGuid: {751417f4-dbcd-4888-a1c2-6bb010c41084} -->
     <ProjectGuid>{751417f4-dbcd-4888-a1c2-6bb010c41084}</ProjectGuid>
     <ApplicationIcon>..\app_icon.ico</ApplicationIcon>
+    <AssemblyTitle>Minio Full Sync (mfs)</AssemblyTitle>
+    <Description>本地文件夹到 MinIO 一次性全量同步工具</Description>
+    <Product>FullSync (mfs)</Product>
+    <Company>smallbyte</Company>
+    <Copyright>Copyright (c) smallbyte 2026</Copyright>
     <UseAppHost>true</UseAppHost>
     <TargetFrameworkVersion>v2.0</TargetFrameworkVersion>
     <FileUpgradeFlags>
