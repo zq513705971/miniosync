@@ -26,6 +26,9 @@ namespace MinioSync
         /// <summary>Limits concurrent upload/delete tasks to MaxConcurrentUploads.</summary>
         private readonly SemaphoreSlim _semaphore;
 
+        /// <summary>SMTP email settings for failure alerts. Null = no notification.</summary>
+        private readonly EmailSettings _emailSettings;
+
         private class PendingChange
         {
             public string Action { get; set; }
@@ -42,9 +45,10 @@ namespace MinioSync
         public string LocalFolderPath => _config.LocalFolderPath;
         public string BucketName => _config.BucketName;
 
-        public FolderMonitor(SyncConfig config)
+        public FolderMonitor(SyncConfig config, EmailSettings emailSettings = null)
         {
             _config = config;
+            _emailSettings = emailSettings;
 
             // Build one shared MinioUploader for all in-process calls.
             _uploader = new MinioUploader(
@@ -82,13 +86,17 @@ namespace MinioSync
 
             var extFilter = config.FileExtensions != null && config.FileExtensions.Length > 0
                 ? string.Join(", ", config.FileExtensions)
-                : "(所有文件)";
+                : "所有文件";
             var exclFilter = config.ExcludeSuffixes != null && config.ExcludeSuffixes.Length > 0
                 ? string.Join(", ", config.ExcludeSuffixes)
-                : "(无)";
-            var prefixInfo = string.IsNullOrEmpty(config.PathPrefix) ? "" : $", 路径前缀: {config.PathPrefix}";
+                : "无";
             var maxInfo = config.MaxConcurrentUploads > 0 ? config.MaxConcurrentUploads.ToString() : "不限";
-            Logger.Info($"开始监控 [{config.Id}]: {config.LocalFolderPath} (存储桶: {config.BucketName}, 间隔: {config.SyncIntervalSeconds}秒, 稳定等待: {config.FileStabilitySeconds}秒, 扩展名: {extFilter}, 排除后缀: {exclFilter}, 并发: {maxInfo}{prefixInfo})");
+            var prefixInfo = string.IsNullOrEmpty(config.PathPrefix) ? "" : $", 路径前缀: {config.PathPrefix}";
+            Logger.Info($"  [{config.Id}] 监控已启动");
+            Logger.Info($"    文件夹:   {config.LocalFolderPath}");
+            Logger.Info($"    MinIO:    {config.MinIOEndpoint}/{config.BucketName}{prefixInfo}");
+            Logger.Info($"    间隔:     {config.SyncIntervalSeconds}秒 | 稳定等待: {config.FileStabilitySeconds}秒 | 并发: {maxInfo}");
+            Logger.Info($"    文件过滤: {extFilter} | 排除: {exclFilter}");
         }
 
         private void OnFileChanged(object sender, FileSystemEventArgs e)
@@ -244,6 +252,7 @@ namespace MinioSync
             ThreadPool.QueueUserWorkItem(async _ =>
             {
                 await _semaphore.WaitAsync().ConfigureAwait(false);
+                string errorMsg = null;
                 try
                 {
                     bool ok;
@@ -264,6 +273,7 @@ namespace MinioSync
                     }
                     if (!ok)
                     {
+                        errorMsg = $"{action} 操作返回失败";
                         Logger.Warn($"{tag}{action} 失败: {objectKey}");
                         if (action == "upload")
                             ErrorLog.Record(_config.Id, relativeKey);
@@ -271,6 +281,7 @@ namespace MinioSync
                 }
                 catch (Exception ex)
                 {
+                    errorMsg = $"{action} 异常: {ex.Message}";
                     Logger.Error($"{tag}{action} 异常: {objectKey}", ex);
                     if (action == "upload")
                         ErrorLog.Record(_config.Id, relativeKey);
@@ -278,6 +289,18 @@ namespace MinioSync
                 finally
                 {
                     _semaphore.Release();
+                }
+
+                // Send notification email on failure if configured
+                if (errorMsg != null && _emailSettings != null &&
+                    _config.NotifyEmails != null && _config.NotifyEmails.Length > 0)
+                {
+                    var subject = $"MinioSync 同步失败 - {_config.Id} - {action}";
+                    var body = EmailNotifier.BuildFailureBody(
+                        _config.Id, action, objectKey, errorMsg);
+                    // Fire-and-forget: don't block the upload thread on email
+                    _ = EmailNotifier.SendAlertAsync(
+                        _emailSettings, _config.NotifyEmails, subject, body);
                 }
             });
         }

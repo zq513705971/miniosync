@@ -43,6 +43,7 @@ namespace MinioSync
             // Load configs
             var configManager = new ConfigManager(configPath);
             var configs = configManager.LoadAllConfigs();
+            var emailSettings = configManager.EmailSettings;
 
             if (configs.Count == 0)
             {
@@ -51,27 +52,38 @@ namespace MinioSync
                 Logger.Warn("  {\"Version\":1,\"Configs\":[{\"Id\":\"my-project\",\"LocalFolderPath\":\"C:\\Data\",\"MinIOEndpoint\":\"http://localhost:9000\",\"BucketName\":\"bucket\",\"AccessKey\":\"key\",\"SecretKey\":\"secret\",\"SyncIntervalSeconds\":60,\"Enable\":true}]}");
             }
 
-            // Start monitors (skip disabled configs)
+            // Start monitors (skip disabled configs and remote-only configs)
+            var started = 0;
             foreach (var config in configs)
             {
                 if (!config.Enable)
                 {
-                    Logger.Info($"配置 [{config.Id}] 已禁用，跳过监控");
+                    Logger.Info($"  [{config.Id}] 已禁用，跳过");
+                    continue;
+                }
+
+                if (string.IsNullOrWhiteSpace(config.LocalFolderPath))
+                {
+                    Logger.Info($"  [{config.Id}] 远程配置(无本地文件夹)，跳过监控");
                     continue;
                 }
 
                 try
                 {
-                    var monitor = new FolderMonitor(config);
+                    var monitor = new FolderMonitor(config, emailSettings);
                     _monitors.Add(monitor);
+                    started++;
                 }
                 catch (Exception ex)
                 {
-                    Logger.Error($"启动监控失败 '{config.LocalFolderPath}'", ex);
+                    Logger.Error($"  [{config.Id}] 启动失败", ex);
                 }
             }
 
-            Logger.Info($"正在监控 {_monitors.Count} 个文件夹。按 Ctrl+C 退出。");
+            if (started > 0)
+                Logger.Info($"共 {started} 个监控已启动，按 Ctrl+C 停止。");
+            else
+                Logger.Warn("没有启动任何监控。请检查配置。");
 
             // Handle Ctrl+C graceful shutdown
             Console.CancelKeyPress += (s, e) =>
