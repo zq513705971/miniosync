@@ -1,0 +1,27 @@
+FullSync/Program.cs
+  s_5ce66a743058ac::t_3873154c2ba556 54
+MinioSync/Program.cs
+  s_5ce66a743058ac::t_d54043b768972c 34
+README.md
+  s_5ce66a743058ac::t_6f9f32fb435663 145,148,576-579,582,590-593,629,632
+SyncWorker/Program.cs
+  s_5ce66a743058ac::t_97c6d187563415 27
+publish.ps1
+  s_5ce66a743058ac::t_2c17ec7ca128af 9-10
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "3669206da476dabca6977916463c8fc5ec7ff89c",
+  "prompts": {},
+  "sessions": {
+    "s_5ce66a743058ac": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ses_0a58e355bffe7S7JgSeTCX2UKO",
+        "model": "unknown"
+      },
+      "human_author": "zhanqun <zhanqun@eccom.com.cn>"
+    }
+  }
+}
