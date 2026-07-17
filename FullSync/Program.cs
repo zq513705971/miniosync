@@ -51,7 +51,7 @@ namespace FullSync
                 }
             }
 
-            Logger.Initialize(logsDir, "fullsync");
+            Logger.Initialize(logsDir, "mfs");
             ErrorLog.Initialize(logsDir);
 
             if (string.IsNullOrEmpty(configId))

@@ -31,7 +31,7 @@ namespace MinioSync
                     logsDir = args[++i];
             }
 
-            Logger.Initialize(logsDir, "sync");
+            Logger.Initialize(logsDir, "mms");
             ErrorLog.Initialize(logsDir);
 
             Logger.Info("============================================");

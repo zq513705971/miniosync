@@ -142,11 +142,10 @@ deploy/
 ├── mfs.exe                   # FullSync 一次性全量同步 → Minio Full Sync
 ├── m2ms.exe                  # Minio2MinioSync 跨 MinIO 同步 → Minio to Minio Sync
 ├── mss.exe                   # SyncWorker 单文件 CLI → Minio Single Sync
-├── config.json               # 配置
-└── *.runtimeconfig.json      # 运行时配置（一般不需修改）
+└── config.json               # 配置
 ```
 
-> `MinioCommon.dll`、`Minio.dll`、`System.Reactive.dll` 等依赖已通过 `PublishSingleFile` 打包进每个 EXE 内部，deploy/ 目录不会看到额外的 DLL 文件。
+> 所有依赖（Minio SDK、MailKit、System.Text.Json 等）已通过 `PublishSingleFile` 打包进每个 EXE 内部，deploy/ 目录不会看到额外的 DLL 文件。
 
 
 ---
@@ -574,15 +573,13 @@ mss.exe ^
 
 按日期切分，每个组件生成独立文件：
 
-- `sync-YYYY-MM-DD-<pid>.log` — 守护进程（包含 FSW 事件、进程内上传/删除的所有日志）
-- `fullsync-YYYY-MM-DD-<pid>.log` — FullSync 工具
-- `mfs-YYYY-MM-DD-<pid>.log` — FullSync（`mfs.exe`）一次性全量同步
-- `mms-YYYY-MM-DD-<pid>.log` — MinioSync（`mms.exe`）守护进程（包含 FSW 事件、进程内上传/删除的所有日志）
-- `m2ms-YYYY-MM-DD-<pid>.log` — Minio2MinioSync（`m2ms.exe`）跨 MinIO 复制
-- `mss-YYYY-MM-DD-<pid>.log` — SyncWorker（**仅当外部手工调用 mss.exe 时才会生成**；守护进程和 mfs 不再调用 SyncWorker，所以正常运行时不会有此文件）
+- `mms-YYYY-MM-DD-<pid>.log` — MinioSync 守护进程（包含 FSW 事件、进程内上传/删除的所有日志）
+- `mfs-YYYY-MM-DD-<pid>.log` — FullSync 一次性全量同步
+- `m2ms-YYYY-MM-DD-<pid>.log` — Minio2MinioSync 跨 MinIO 复制
+- `mss-YYYY-MM-DD-<pid>.log` — SyncWorker（**仅当外部手工调用 mss.exe 时才会生成**；mms/mfs 不调用 SyncWorker，所以正常运行时不会有此文件）
 - `error-YYYY-MM-DD-{configId}-<pid>.txt` — **上传失败记录**（`mfs` 和 `mms` 守护进程共享）。每行一个**相对于** `LocalFolderPath` 的路径，可配合 `mfs.exe --list` 重试
 
-`<pid>` 是进程 ID（`Environment.ProcessId`），同一组件多次启动会生成多个文件，**不会互相覆盖**。例：`fullsync-2026-07-13-8272.log`、`fullsync-2026-07-13-4108.log`。
+`<pid>` 是进程 ID（`Environment.ProcessId`），同一组件多次启动会生成多个文件，**不会互相覆盖**。例：`mfs-2026-07-13-8272.log`、`mfs-2026-07-13-4108.log`。
 
 错误文件名中的 `{configId}` 是对应的配置标识（如 `project-a`），多配置运行时可以清晰区分不同配置的上传失败记录。例：`error-2026-07-13-project-a-8272.txt`、`error-2026-07-13-project-b-8272.txt`。
 
@@ -590,10 +587,10 @@ mss.exe ^
 
 例（守护进程删除子目录）：
 ```
-[2026-07-12 10:30:10.121] [信息] [2163bd8c] delete-prefix 排队: 例子/
-[2026-07-12 10:30:10.250] [信息] [2163bd8c] 列出前缀 '例子/' 下的对象...
-[2026-07-12 10:30:10.418] [信息] [2163bd8c] 找到 5 个对象，开始批量删除...
-[2026-07-12 10:30:10.612] [信息] [2163bd8c] 批量删除完成: 成功=5, 失败=0
+[10:30:10] [信息] 监控已启动: project-a -> E:\Test\p1 -> http://192.168.52.120:9000/dir1
+[10:30:15] [信息] 上传成功: myproject/doc.txt
+[10:31:20] [信息] 上传成功: myproject/sub/a.csv
+[10:32:05] [警告] 上传失败 'myproject/bad.log'
 ```
 
 ---
@@ -629,10 +626,10 @@ dotnet --version
 
 检查：
 - `config.json` 中 `Enable: true`
-- 守护进程日志（`logs/sync-*.log`）里应出现 `delete-prefix 排队: 子目录/`，紧接着是列出和批量删除日志
+- 守护进程日志（`logs/mms-*.log`）中应能看到对应的目录删除处理记录
 - MinIO 中该前缀下确实有对象（`DeleteObjectsByPrefixAsync` 通过 SDK 的 `ListObjectsEnumAsync` 列出后用 `RemoveObjectsAsync` 批量删除；批量失败时 SDK 会回退到逐个删除）
 
-如果日志里完全没出现 `delete-prefix`，说明 FSW 没检测到目录删除事件——这种情况多见于网络盘/共享盘，或 `IncludeSubdirectories` 被关掉。
+如果日志里完全没有目录删除的处理记录，说明 FSW 没检测到目录删除事件——这种情况多见于网络盘/共享盘，或 `IncludeSubdirectories` 被关掉。
 
 ### 4. 403 SignatureDoesNotMatch
 

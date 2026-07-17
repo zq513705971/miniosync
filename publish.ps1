@@ -6,8 +6,8 @@
 #   file that already bundles the .NET 8 runtime, the Minio SDK, System.Text.Json,
 #   and the project's own dependencies.
 # - Target machines do **not** need any pre-installed .NET / runtime.
-# - Costs ~65 MB per exe (compressed) on disk; start-up speed trade-off is
-#   negligible because all three binaries are long-lived (daemon) or one-shot.
+# - Costs ~40 MB per exe (compressed) on disk; start-up speed trade-off is
+#   negligible because all binaries are long-lived (daemon) or one-shot.
 #
 # Usage (PowerShell, Windows):
 #   .\publish.ps1                       # default: Configuration=Release, Runtime=win-x64

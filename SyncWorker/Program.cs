@@ -24,7 +24,7 @@ namespace SyncWorker
         {
             var baseDir = AppDomain.CurrentDomain.BaseDirectory;
             var logsDir = Path.Combine(baseDir, "logs");
-            Logger.Initialize(logsDir, "worker");
+            Logger.Initialize(logsDir, "mss");
 
             var tag = "";
 
