@@ -1,84 +1,263 @@
-name: .NET 8 Build & Publish
+name: MinioSync Release
+
+# ------------------------------------------------------------------------------
+# MinioSync 全平台发布工作流
+# ------------------------------------------------------------------------------
+#
+# 触发：
+#   - push tag (v*):          构建 6 个 RID 包 + 上传 GitHub Release
+#   - pull_request:           构建 6 个 RID 包 + 上传 artifact (不发 Release)
+#
+# 矩阵覆盖 (6 RID × 6 runner):
+#   ┌─────────────────┬─────────────────────┐
+#   │ RID             │ runner              │
+#   ├─────────────────┼─────────────────────┤
+#   │ win-x64         │ windows-latest      │
+#   │ win-arm64       │ windows-11-arm      │
+#   │ osx-x64         │ macos-13            │
+#   │ osx-arm64       │ macos-latest (M1)   │
+#   │ linux-x64       │ ubuntu-latest       │
+#   │ linux-arm64     │ ubuntu-24.04-arm    │
+#   └─────────────────┴─────────────────────┘
+#
+# 产物命名 (zip 后):
+#   MinioSync-v<ver>-<rid>.zip
+#
+# 关键坑防御:
+#   1. restore 必须带 -r <RID>     → 否则 NETSDK1047 (project.assets.json 缺 win-x64 资产)
+#   2. publish 必须带 PlatformTarget=arm64/x64  → 否则 NETSDK1032
+#      (Directory.Build.props 硬编码了 x64，会跟 osx-arm64/win-arm64 冲突)
+#   3. publish 不要传 --no-build   → 单文件打包需要 RID-specific obj/ 中间产物
+# ------------------------------------------------------------------------------
 
 on:
   push:
-    branches: [ "master" ]
     tags: [ 'v*' ]
   pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
 
+# 单一 job 用矩阵；6 个 RID 并行跑, 单个 ~3-5min
 jobs:
   build:
+    name: build (${{ matrix.os }}/${{ matrix.rid }})
+    runs-on: ${{ matrix.runner }}
     permissions:
-      contents: write
-    runs-on: windows-2022
+      contents: write  # 仅在 release step 需要写 release；其他 step 取 read 也够，但 contents:write 最简
+
+    strategy:
+      # 不允许 fail-fast: 单个 RID 编译失败不影响其他 RID 上传
+      fail-fast: false
+      matrix:
+        include:
+          # ---- Windows ----
+          - os: windows
+            rid: win-x64
+            runner: windows-latest
+            platform_target: x64
+            ext: .exe
+          - os: windows
+            rid: win-arm64
+            runner: windows-11-arm
+            platform_target: arm64
+            ext: .exe
+          # ---- macOS ----
+          - os: macos
+            rid: osx-x64
+            runner: macos-15-intel
+            platform_target: x64
+            ext: ""
+          - os: macos
+            rid: osx-arm64
+            runner: macos-latest
+            platform_target: arm64
+            ext: ""
+          # ---- Linux ----
+          - os: linux
+            rid: linux-x64
+            runner: ubuntu-latest
+            platform_target: x64
+            ext: ""
+          - os: linux
+            rid: linux-arm64
+            runner: ubuntu-24.04-arm
+            platform_target: arm64
+            ext: ""
 
     steps:
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Setup .NET 8 SDK
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: 8.0.x
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
 
-    - name: Determine Version
-      id: version
-      shell: pwsh
-      run: |
-        $ref = "${{ github.ref }}"
-        if ($ref -match '^refs/tags/v(.+)$') {
-          # Tag push: 直接从标签名取版本号, 如 v1.0.1 → 1.0.1
-          $ver = $matches[1]
-        } else {
-          # Branch/PR: 基于 git tag + commit 计数算版本
-          $lastTag = & git describe --tags --abbrev=0 2>$null
-          if (-not $lastTag) { $lastTag = '0.0.0' }
-          $lastTag = $lastTag -replace '^[vV]', ''
-          $commitCount = & git rev-list --count "$lastTag..HEAD" 2>$null
-          if (-not $commitCount) { $commitCount = 0 }
-          $shortSha = (& git rev-parse --short HEAD).Trim()
-          $ver = "$lastTag-build.$commitCount+$shortSha"
-        }
-        Write-Host "Version: $ver"
-        "semVer=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      # GitHub-hosted Windows runners 用 Git Bash, 默认不带 zip 命令。
+      # 这里为 Windows 兜底安装 zip (用 choco 安装, Windows runner 预装 choco).
+      # macOS / Linux runner 已自带 zip, 此步 if: 跳过.
+      - name: Install zip (Windows only)
+        if: matrix.os == 'windows'
+        shell: bash
+        run: |
+          if ! command -v zip >/dev/null 2>&1; then
+            printf "Installing zip via choco...\n"
+            choco install zip -y --no-progress
+            # choco 装 zip 到 C:\Program Files\Git\usr\bin; 把这个路径加入 $GITHUB_PATH
+            printf "C:\\Program Files\\Git\\usr\\bin\n" >> "$GITHUB_PATH"
+          fi
+          zip --version
 
-    - name: Restore NuGet packages
-      run: dotnet restore MinioSync.sln
+      # 计算版本号:
+      # - tag 推送:   用 tag 名 (v1.0.0 → 1.0.0)
+      # - PR / 手动:  用 latest tag + build counter + 短 hash, 例如 1.0.0-build.42+abcdef1
+      # 用 bash: github-hosted runner 三种 OS 都自带 bash, 不用 pwsh
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          ref="${GITHUB_REF:-}"
+          if [[ "$ref" =~ ^refs/tags/v(.+)$ ]]; then
+            ver="${BASH_REMATCH[1]}"
+          else
+            lastTag="$(git describe --tags --abbrev=0 2>/dev/null || echo '0.0.0')"
+            lastTag="${lastTag#[vV]}"   # strip leading v/V (bash 3.2 compatible)
+            commitCount="$(git rev-list --count "${lastTag}..HEAD" 2>/dev/null || echo 0)"
+            shortSha="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+            ver="${lastTag}-build.${commitCount}+${shortSha}"
+          fi
+          echo "Version: $ver"
+          echo "semVer=$ver" >> "$GITHUB_OUTPUT"
 
-    - name: Publish (self-contained, single-file, win-x64)
-      run: .\publish.ps1 -Configuration Release -Version ${{ steps.version.outputs.semVer }}
+      # ===== Build =====
+      # 关键: restore 必须带 -r 才能写出 RID-specific assets
+      # (publish.ps1 / publish-mac.sh 都有同一段注释解释 NETSDK1047)
+      - name: Restore (with -r ${{ matrix.rid }})
+        run: dotnet restore MinioSync.sln -r ${{ matrix.rid }}
 
-    - name: Upload build artifacts (workflow run summary)
-      uses: actions/upload-artifact@v4
-      with:
-        name: MinioSync-Build-${{ steps.version.outputs.semVer }}
-        path: deploy/
-        if-no-files-found: error
+      - name: Build Release
+        run: dotnet build MinioSync.sln -c Release --no-restore
 
-    - name: Report sizes
-      shell: pwsh
-      run: |
-        Get-ChildItem deploy/ -File | Sort-Object Length -Descending | ForEach-Object {
-          $sizeMB = [math]::Round($_.Length/1MB, 2)
-          "{0,8} MB  {1}" -f $sizeMB, $_.Name
-        } | Write-Host
+      # ===== Publish =====
+      # 4 个 Exe 项目分别 publish 到同一个 stage/ 目录。
+      # 关键点:
+      #   - p:PlatformTarget=$PT 修复 NETSDK1032 (Directory.Build.props 写死 x64)
+      #   - 不传 --no-build        (单文件打包需要 RID-specific 中间产物)
+      #   - PublishSingleFile=true 输出独立单文件 EXE，deploy 全是单文件
+      - name: Publish self-contained single-file binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          rid="${{ matrix.rid }}"
+          pt="${{ matrix.platform_target }}"
+          ver="${{ steps.version.outputs.semVer }}"
+          stage="stage"
+          mkdir -p "$stage"
 
-    - name: Package deploy (zip)
-      if: startsWith(github.ref, 'refs/tags/v')
-      shell: pwsh
-      run: |
-        $ver = "${{ steps.version.outputs.semVer }}"
-        $zipName = "MinioSync-v$ver.zip"
-        Compress-Archive -Path deploy\* -DestinationPath $zipName -CompressionLevel Optimal
-        Write-Host "Created: $zipName"
-        "RELEASE_ZIP=$zipName" | Out-File -FilePath $env:GITHUB_ENV -Append
+          publish_props=(
+            "-p:SelfContained=true"
+            "-p:PublishSingleFile=true"
+            "-p:EnableCompressionInSingleFile=true"
+            "-p:IncludeNativeLibrariesForSelfExtract=true"
+            "-p:PublishReadyToRun=false"
+            "-p:PublishTrimmed=false"
+            "-p:Version=$ver"
+            "-p:PlatformTarget=$pt"
+          )
 
-    - name: Create GitHub Release
-      if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v2
-      with:
-        name: v${{ steps.version.outputs.semVer }}
-        files: ${{ env.RELEASE_ZIP }}
-        generate_release_notes: true
-        fail_on_unmatched_files: true
+          for proj in MinioSync FullSync SyncWorker Minio2MinioSync; do
+            echo "  -> $proj (-r $rid, self-contained, single-file)"
+            dotnet publish "$proj/$proj.csproj" \
+              --configuration Release \
+              --runtime "$rid" \
+              --output "$stage/" \
+              "${publish_props[@]}"
+          done
+
+          # ===== 重命名为短名 =====
+          # dotnet publish 的产物名:
+          #   win-*  → <AssemblyName>.exe   (例如 MinioSync.exe)
+          #   非win  → <AssemblyName>       (例如 MinioSync, 无扩展名)
+          # 按 RID 分别选 .exe 后缀
+          case "$rid" in
+            win-*) isWindows=1 ;;
+            *)     isWindows=0 ;;
+          esac
+          rename_one() {
+            local proj="$1" short="$2"
+            local src dst
+            if [[ "$isWindows" == "1" ]]; then
+              src="$stage/$proj.exe"; dst="$stage/$short.exe"
+            else
+              src="$stage/$proj";     dst="$stage/$short"
+            fi
+            if [[ -f "$src" ]]; then
+              mv -f "$src" "$dst"
+              echo "  $src -> $dst"
+            else
+              echo "::warning::missing publish artifact: $src"
+            fi
+          }
+          rename_one MinioSync       mms
+          rename_one FullSync        mfs
+          rename_one SyncWorker      mss
+          rename_one Minio2MinioSync m2ms
+
+          # 拷贝 config.json
+          if [[ -f config.json ]]; then
+            cp -f config.json "$stage/"
+          fi
+
+          # 报告产物
+          echo "=== artifacts ==="
+          for f in "$stage"/*; do
+            if [[ -f "$f" ]]; then
+              bytes=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f")
+              mb=$(awk -v b="$bytes" 'BEGIN { printf "%.2f", b/1048576 }')
+              printf "  %8s MB  %s\n" "$mb" "$(basename "$f")"
+            fi
+          done
+
+          # 打成 zip 用于上传
+          zip_name="MinioSync-v${ver}-${rid}.zip"
+          cd "$stage" && zip -rq "../$zip_name" . && cd ..
+          echo "Created: $zip_name ($(du -h "$zip_name" | cut -f1))"
+
+          {
+            echo "RELEASE_ZIP=$zip_name"
+            echo "STAGE_DIR=$stage"
+          } >> "$GITHUB_ENV"
+
+      # ===== 验证 EXE/Mach-O/ELF (非 Windows 平台) =====
+      # 用 file 命令确认产物是真正的原生二进制（不是 .NET dll wrapper）
+      # Windows runner 没有 file 命令，跳过
+      - name: Verify binary architecture
+        if: matrix.os != 'windows'
+        shell: bash
+        run: |
+          echo "=== file output ==="
+          file stage/mms stage/mfs stage/mss stage/m2ms 2>&1 || true
+          echo "=== sanity (must be native binary, not a script) ==="
+          file stage/mms | grep -E 'Mach-O|ELF' && echo "OK" || echo "WARN: no native binary detected"
+
+      # ===== 上传为 workflow artifact (所有触发器) =====
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MinioSync-${{ matrix.rid }}-${{ steps.version.outputs.semVer }}
+          path: ${{ env.RELEASE_ZIP }}
+          if-no-files-found: error
+          retention-days: 14
+
+      # ===== 仅 push tag 时上传到 GitHub Release =====
+      - name: Upload to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          files: ${{ env.RELEASE_ZIP }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
