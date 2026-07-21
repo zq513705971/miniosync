@@ -1,0 +1,26 @@
+publish-mac.sh
+  s_37b6cd76a2c129::t_c0c7ebd722d9da 291-292
+  s_37b6cd76a2c129::t_fa570586ac5cfb 249-262,264
+  s_37b6cd76a2c129::t_dd511867f38527 267,288-289
+  s_37b6cd76a2c129::t_10599d622cd9ec 218-230,239-241
+  s_37b6cd76a2c129::t_0154c2d3a01ead 263
+  s_37b6cd76a2c129::t_be5d2956a5a701 1-217,231-238,242-248,265-266,268-287,290,293-333
+MinioCommon/MinioCommon.csproj
+  s_37b6cd76a2c129::t_6db99ed03a1d26 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "85f47c7f05cb25fd9c5ea1be5a8f53cb84759555",
+  "prompts": {},
+  "sessions": {
+    "s_37b6cd76a2c129": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ses_07b15f367ffepXZpfRffq8RYuW",
+        "model": "unknown"
+      },
+      "human_author": "zhanqun <zhanqun@eccom.com.cn>"
+    }
+  }
+}
