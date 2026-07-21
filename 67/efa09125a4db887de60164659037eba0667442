@@ -1,0 +1,23 @@
+.github/workflows/dotnet.yml
+  s_37b6cd76a2c129::t_54da5b6a4c9137 106,108-109
+  s_37b6cd76a2c129::t_9f7d9c8dea4659 116,119,121-132,150,152-166,170-177,180-201,203-206,209-211,214-221,224-231
+  s_37b6cd76a2c129::t_27f1912d4a778f 1-31,37-38,40,43-44,46-66,68-85,88-97,113-115,117-118,120,133-149,151,167-169,178-179,202,207-208,212-213,222-223,232-263
+  s_37b6cd76a2c129::t_7e19650b252514 67
+  s_37b6cd76a2c129::t_5ced87788200a1 98-105,107,110-112
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.12",
+  "base_commit_sha": "67efa09125a4db887de60164659037eba0667442",
+  "prompts": {},
+  "sessions": {
+    "s_37b6cd76a2c129": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ses_07b15f367ffepXZpfRffq8RYuW",
+        "model": "unknown"
+      },
+      "human_author": "zhanqun <zhanqun@eccom.com.cn>"
+    }
+  }
+}
